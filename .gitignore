@@ -1,1 +1,4 @@
 *.pyc
+
+notebooks/models/
+notebooks/datasets/
