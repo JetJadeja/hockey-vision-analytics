@@ -135,7 +135,7 @@ def run_player_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
         labels = [f"#{num}" if num != "none" else "none" for num in jersey_numbers]
         
         annotated_frame = frame.copy()
-        annotated_frame = BOX_ANNOTATOR.annotate(annotated_frame, valid_detections)
+        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, valid_detections)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, valid_detections, labels=labels)
         yield annotated_frame
 
@@ -148,8 +148,7 @@ def run_puck_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
         callback=lambda image_slice: sv.Detections.from_ultralytics(
             puck_model(image_slice, imgsz=640, verbose=False)[0]
         ),
-        slice_wh=(640, 640),
-        overlap_filter_strategy=sv.OverlapFilter.NONE
+        slice_wh=(640, 640)
     )
 
     for frame in sv.get_video_frames_generator(source_path=source_path):
@@ -317,7 +316,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Hockey Vision Analytics')
     parser.add_argument('--source_path', type=str, required=True, help='Path to the source video file.')
     parser.add_argument('--target_path', type=str, default=None, help='Path to save the output video.')
-    parser.add_argument('--mode', type=Mode, default=Mode.PLAYER_TRACKING, choices=list(Mode), help='The processing mode.')
+    parser.add_argument('--mode', type=Mode, default=Mode.PLAYER_DETECTION, choices=list(Mode), help='The processing mode.')
     parser.add_argument('--device', type=str, default='cpu', help="Device to run models on ('cpu', 'cuda', 'mps').")
     
     args = parser.parse_args()
