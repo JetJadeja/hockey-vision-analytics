@@ -3,4 +3,8 @@
 notebooks/models/
 notebooks/datasets/
 
+hockey/data/
+
 **/.env
+
+**/.DS_Store
