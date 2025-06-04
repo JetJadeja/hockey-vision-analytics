@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import numpy as np
 import cv2
 from collections import defaultdict
@@ -10,6 +10,13 @@ try:
 except ImportError:
     HYBRID_AVAILABLE = False
 
+# Import the robust classifier
+try:
+    from .team_robust import RobustTeamClassifier
+    ROBUST_AVAILABLE = True
+except ImportError:
+    ROBUST_AVAILABLE = False
+
 
 class TeamClassifier:
     """
@@ -17,13 +24,17 @@ class TeamClassifier:
     Uses basic color analysis to distinguish teams without complex ML.
     """
     
-    def __init__(self, device: str = 'cpu', batch_size: int = 32, use_hybrid: bool = True):
+    def __init__(self, device: str = 'cpu', batch_size: int = 32, use_hybrid: bool = True, use_robust: bool = True):
         # Keep interface compatible but ignore device/batch_size for this simple approach
         self.device = device
         self.batch_size = batch_size
-        self.use_hybrid = use_hybrid and HYBRID_AVAILABLE
+        self.use_robust = use_robust and ROBUST_AVAILABLE
+        self.use_hybrid = use_hybrid and HYBRID_AVAILABLE and not self.use_robust
         
-        if self.use_hybrid:
+        if self.use_robust:
+            # Use state-of-the-art robust classifier
+            self.robust_classifier = RobustTeamClassifier(device=device)
+        elif self.use_hybrid:
             # Use advanced hybrid classifier
             self.hybrid_classifier = HybridTeamClassifier(device=device)
         else:
@@ -93,12 +104,26 @@ class TeamClassifier:
         
         return team, confidence
     
-    def fit(self, crops: List[np.ndarray]) -> None:
+    def fit(self, crops: List[np.ndarray], positions: Optional[List[tuple]] = None) -> None:
         """
         Fit the classifier on training crops.
-        Uses hybrid approach if available, otherwise simple analysis.
+        Uses robust approach if available, then hybrid, otherwise simple analysis.
         """
-        if self.use_hybrid:
+        if self.use_robust:
+            # Use robust classifier
+            try:
+                self.robust_classifier.fit(crops, positions=positions)
+            except Exception as e:
+                print(f"Robust classifier failed: {e}")
+                print("Falling back to hybrid classifier")
+                self.use_robust = False
+                self.use_hybrid = HYBRID_AVAILABLE
+                if self.use_hybrid:
+                    self.hybrid_classifier = HybridTeamClassifier(device=self.device)
+                    self.fit(crops, positions)
+                else:
+                    self._simple_fit(crops)
+        elif self.use_hybrid:
             # Use hybrid classifier
             try:
                 self.hybrid_classifier.fit(crops)
@@ -127,13 +152,26 @@ class TeamClassifier:
         
         # Could adjust thresholds here if needed, but keeping it simple
     
-    def predict(self, crops: List[np.ndarray], tracker_ids: Optional[np.ndarray] = None) -> np.ndarray:
+    def predict(self, crops: List[np.ndarray], tracker_ids: Optional[np.ndarray] = None, positions: Optional[List[tuple]] = None) -> np.ndarray:
         """
         Predict team assignments for player crops.
         If tracker_ids provided, uses temporal consistency.
         """
         if not crops:
             return np.array([])
+        
+        if self.use_robust:
+            # Use robust classifier
+            try:
+                assignments = self.robust_classifier.predict(crops, tracker_ids, positions)
+                return self.robust_classifier.get_team_labels(assignments)
+            except Exception as e:
+                print(f"Robust prediction failed: {e}")
+                print("Falling back to hybrid classifier")
+                self.use_robust = False
+                self.use_hybrid = HYBRID_AVAILABLE
+                if self.use_hybrid:
+                    self.hybrid_classifier = HybridTeamClassifier(device=self.device)
         
         if self.use_hybrid:
             # Use hybrid classifier

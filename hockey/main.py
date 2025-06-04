@@ -215,15 +215,23 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
     # First pass: collect player crops to train classifier
     print("Collecting player crops for team classification...")
     crops = []
+    positions = []
     frame_generator = sv.get_video_frames_generator(source_path=source_path, stride=10)
     for frame in tqdm(frame_generator, desc='Collecting crops'):
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
         player_detections = detections[detections.class_id == PLAYER_CLASS_ID]
         crops.extend(get_crops(frame, player_detections))
+        
+        # Extract center positions of bounding boxes
+        if len(player_detections) > 0:
+            for xyxy in player_detections.xyxy:
+                center_x = (xyxy[0] + xyxy[2]) / 2
+                center_y = (xyxy[1] + xyxy[3]) / 2
+                positions.append((center_x, center_y))
 
     print("Fitting team classifier...")
-    team_classifier.fit(crops)
+    team_classifier.fit(crops, positions=positions)
     print("Classifier fitted.")
 
     # Second pass: process video and apply team colors
@@ -246,8 +254,18 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
         # Get team classifications for players
         if len(player_detections) > 0:
             player_crops = get_crops(frame, player_detections)
-            # Pass tracker IDs for temporal consistency
-            player_team_ids = team_classifier.predict(player_crops, tracker_ids=player_detections.tracker_id)
+            # Extract positions for current frame
+            player_positions = []
+            for xyxy in player_detections.xyxy:
+                center_x = (xyxy[0] + xyxy[2]) / 2
+                center_y = (xyxy[1] + xyxy[3]) / 2
+                player_positions.append((center_x, center_y))
+            # Pass tracker IDs and positions for better classification
+            player_team_ids = team_classifier.predict(
+                player_crops, 
+                tracker_ids=player_detections.tracker_id,
+                positions=player_positions
+            )
         else:
             player_team_ids = np.array([])
 
