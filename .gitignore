@@ -8,3 +8,5 @@ hockey/data/
 **/.env
 
 **/.DS_Store
+
+**/output.mp4
