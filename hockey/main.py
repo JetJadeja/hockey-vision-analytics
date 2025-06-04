@@ -212,15 +212,17 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
     # Dictionary to store jersey numbers for each tracker ID
     tracker_jersey_numbers = {}
     
-    # First pass: collect player crops to train classifier
-    print("Collecting player crops for team classification...")
+    # Fit classifier with sample frames
+    print("Fitting team classifier...")
     crops = []
     positions = []
     frame_generator = sv.get_video_frames_generator(source_path=source_path, stride=10)
-    for frame in tqdm(frame_generator, desc='Collecting crops'):
+    for i, frame in enumerate(frame_generator):
+        if i > 20:  # Just sample first 20 frames for fitting
+            break
         result = player_model(frame, imgsz=1280, verbose=False)[0]
-        detections = sv.Detections.from_ultralytics(result)
-        player_detections = detections[detections.class_id == PLAYER_CLASS_ID]
+        player_detections = sv.Detections.from_ultralytics(result)
+        player_detections = player_detections[player_detections.class_id == PLAYER_CLASS_ID]
         crops.extend(get_crops(frame, player_detections))
         
         # Extract center positions of bounding boxes
@@ -229,12 +231,11 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
                 center_x = (xyxy[0] + xyxy[2]) / 2
                 center_y = (xyxy[1] + xyxy[3]) / 2
                 positions.append((center_x, center_y))
-
-    print("Fitting team classifier...")
+    
     team_classifier.fit(crops, positions=positions)
     print("Classifier fitted.")
 
-    # Second pass: process video and apply team colors
+    # Process video and apply team colors
     for frame in sv.get_video_frames_generator(source_path=source_path):
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)

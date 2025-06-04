@@ -82,6 +82,7 @@ class RobustTeamClassifier:
         # Team mapping
         self.team_mapping = {}  # cluster_id -> team_id
         self.team_profiles = {}  # team_id -> team statistics
+        self.team_exemplars = {0: [], 1: []}  # High-confidence feature exemplars
         
         # Player tracking
         self.player_profiles: Dict[int, PlayerProfile] = {}
@@ -90,6 +91,9 @@ class RobustTeamClassifier:
         # Confidence thresholds
         self.high_confidence_threshold = 0.8
         self.low_confidence_threshold = 0.4
+        
+        # Feature weighting
+        self.color_feature_weight = 20.0  # Amplify color features to match SigLIP scale
         
     def preprocess_crop(self, crop: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -217,8 +221,12 @@ class RobustTeamClassifier:
         # Color features
         color_features = self.extract_color_features(crops)
         
+        # Scale color features to have similar magnitude to visual features
+        # This prevents SigLIP features from dominating
+        color_features_scaled = color_features * self.color_feature_weight
+        
         # Combine features
-        combined = np.hstack([visual_features, color_features])
+        combined = np.hstack([visual_features, color_features_scaled])
         
         # Add spatial features if available
         if positions and len(positions) == len(crops):
@@ -228,6 +236,29 @@ class RobustTeamClassifier:
             combined = np.hstack([combined, pos_normalized * 0.1])  # Lower weight
         
         return combined
+    
+    def filter_crops_for_clustering(self, 
+                                  crops: List[np.ndarray], 
+                                  positions: Optional[List[Tuple[float, float]]] = None,
+                                  min_size: int = 50) -> Tuple[List[np.ndarray], Optional[List[Tuple[float, float]]], List[float]]:
+        """Filter out low-quality crops before clustering."""
+        filtered_crops = []
+        filtered_positions = []
+        crop_scores = []
+        
+        for i, crop in enumerate(crops):
+            h, w = crop.shape[:2]
+            if h >= min_size and w >= min_size * 0.5:
+                filtered_crops.append(crop)
+                if positions:
+                    filtered_positions.append(positions[i])
+                # Score based on size and aspect ratio
+                aspect_ratio = w / h
+                size_score = h * w
+                aspect_score = 1.0 if 0.4 <= aspect_ratio <= 0.8 else 0.5
+                crop_scores.append(size_score * aspect_score)
+        
+        return filtered_crops, filtered_positions if positions else None, crop_scores
     
     def fit(self, 
             crops: List[np.ndarray],
@@ -239,14 +270,26 @@ class RobustTeamClassifier:
         if len(crops) < self.min_cluster_size * 2:
             raise ValueError(f"Need at least {self.min_cluster_size * 2} crops")
         
-        # Sample crops if too many
-        if sample_every_n > 1:
-            indices = list(range(0, len(crops), sample_every_n))
+        # Filter out bad crops
+        crops, positions, crop_scores = self.filter_crops_for_clustering(crops, positions)
+        
+        if len(crops) < self.min_cluster_size * 2:
+            raise ValueError(f"After filtering, only {len(crops)} crops remain")
+        
+        # Sample crops if too many, with preference for high-quality crops
+        if sample_every_n > 1 or len(crops) > 500:
+            # Use quality scores to preferentially sample better crops
+            crop_scores = np.array(crop_scores)
+            sample_probs = crop_scores / crop_scores.sum()
+            
+            n_samples = min(500, len(crops) // sample_every_n)
+            indices = np.random.choice(len(crops), size=n_samples, replace=False, p=sample_probs)
+            
             crops = [crops[i] for i in indices]
             if positions:
                 positions = [positions[i] for i in indices]
         
-        print(f"Extracting features from {len(crops)} crops...")
+        print(f"Extracting features from {len(crops)} high-quality crops...")
         
         # Extract features
         features = self.extract_multimodal_features(crops, positions)
@@ -342,11 +385,23 @@ class RobustTeamClassifier:
             
             # Store team profiles
             for cluster_id, team_id in self.team_mapping.items():
+                cluster_mask = labels == cluster_id
+                cluster_features = features_reduced[cluster_mask]
+                
                 self.team_profiles[team_id] = {
                     'cluster_id': cluster_id,
                     'stats': cluster_stats[cluster_id],
-                    'exemplar_features': features[labels == cluster_id].mean(axis=0)
+                    'exemplar_features': cluster_features.mean(axis=0)
                 }
+                
+                # Initialize exemplar cache with some high-confidence samples
+                if cluster_features.shape[0] > 0:
+                    # Get samples closest to cluster center
+                    center = cluster_features.mean(axis=0)
+                    distances = np.linalg.norm(cluster_features - center, axis=1)
+                    best_indices = np.argsort(distances)[:10]  # Top 10 closest
+                    
+                    self.team_exemplars[team_id] = [cluster_features[idx] for idx in best_indices]
         
         # Print summary
         for team_id, profile in self.team_profiles.items():
@@ -406,12 +461,14 @@ class RobustTeamClassifier:
                 # Handle outliers
                 if label == -1:
                     # Try to assign based on history or color
-                    assignment = self._handle_outlier(crops[i], tracker_ids[i] if tracker_ids is not None else None)
+                    assignment = self._handle_outlier(crops[i], features_reduced[i], 
+                                                    tracker_ids[i] if tracker_ids is not None else None)
                 else:
                     # Map cluster to team
                     team_id = self.team_mapping.get(label, -1)
                     if team_id == -1:
-                        assignment = self._handle_outlier(crops[i], tracker_ids[i] if tracker_ids is not None else None)
+                        assignment = self._handle_outlier(crops[i], features_reduced[i],
+                                                        tracker_ids[i] if tracker_ids is not None else None)
                     else:
                         assignment = TeamAssignment(team_id, float(strength), False)
                 
@@ -420,6 +477,12 @@ class RobustTeamClassifier:
                     assignment = self._apply_temporal_consistency(
                         assignment, int(tracker_ids[i]), features_reduced[i]
                     )
+                
+                # Cache high-confidence exemplars for future use
+                if assignment.confidence > 0.85 and not assignment.is_outlier and assignment.team_id in self.team_exemplars:
+                    self.team_exemplars[assignment.team_id].append(features_reduced[i])
+                    # Keep only recent exemplars
+                    self.team_exemplars[assignment.team_id] = self.team_exemplars[assignment.team_id][-50:]
                 
                 assignments.append(assignment)
         else:
@@ -432,12 +495,17 @@ class RobustTeamClassifier:
                         assignment, int(tracker_ids[i]), features_reduced[i]
                     )
                 
+                # Cache high-confidence exemplars even in fallback mode
+                if assignment.confidence > 0.85 and not assignment.is_outlier and assignment.team_id in self.team_exemplars:
+                    self.team_exemplars[assignment.team_id].append(features_reduced[i])
+                    self.team_exemplars[assignment.team_id] = self.team_exemplars[assignment.team_id][-50:]
+                
                 assignments.append(assignment)
         
         return assignments
     
-    def _handle_outlier(self, crop: np.ndarray, tracker_id: Optional[int]) -> TeamAssignment:
-        """Handle outlier detection with fallback methods."""
+    def _handle_outlier(self, crop: np.ndarray, features: np.ndarray, tracker_id: Optional[int]) -> TeamAssignment:
+        """Handle outlier detection with nearest cluster matching."""
         # Check tracking history first
         if tracker_id is not None and tracker_id in self.player_profiles:
             profile = self.player_profiles[tracker_id]
@@ -445,7 +513,36 @@ class RobustTeamClassifier:
             if stable_team is not None:
                 return TeamAssignment(stable_team, 0.6, True)
         
-        # Fallback to simple color detection
+        # Find nearest team cluster using exemplar features
+        if self.team_profiles:
+            min_dist = float('inf')
+            best_team = 0
+            
+            for team_id, profile in self.team_profiles.items():
+                # Compare to cluster exemplar
+                exemplar_features = profile.get('exemplar_features')
+                if exemplar_features is not None:
+                    dist = np.linalg.norm(features - exemplar_features)
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_team = team_id
+            
+            # Also check cached high-confidence exemplars
+            for team_id, exemplars in self.team_exemplars.items():
+                if exemplars:
+                    exemplar_array = np.array(exemplars)
+                    distances = np.linalg.norm(exemplar_array - features, axis=1)
+                    min_exemplar_dist = np.min(distances)
+                    if min_exemplar_dist < min_dist:
+                        min_dist = min_exemplar_dist
+                        best_team = team_id
+            
+            # Calculate confidence based on distance
+            # Normalize distance to [0, 1] range
+            confidence = max(0.3, 1.0 - (min_dist / 500))
+            return TeamAssignment(best_team, confidence, True)
+        
+        # Final fallback to simple color detection
         return self._simple_predict(crop)
     
     def _simple_predict(self, crop: np.ndarray) -> TeamAssignment:

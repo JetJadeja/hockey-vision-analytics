@@ -18,6 +18,7 @@ except ImportError:
     ROBUST_AVAILABLE = False
 
 
+
 class TeamClassifier:
     """
     Simple hockey team classifier based on white (away) vs colored (home) jerseys.
