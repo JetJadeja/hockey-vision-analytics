@@ -246,16 +246,20 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
         # Get team classifications for players
         if len(player_detections) > 0:
             player_crops = get_crops(frame, player_detections)
-            player_team_ids = team_classifier.predict(player_crops)
+            # Pass tracker IDs for temporal consistency
+            player_team_ids = team_classifier.predict(player_crops, tracker_ids=player_detections.tracker_id)
         else:
             player_team_ids = np.array([])
 
         # Assign goalies to team 2 (different color)
-        goalie_team_ids = np.array([2] * len(goalie_detections))
+        goalie_team_ids = np.array([2] * len(goalie_detections), dtype=np.int32)
         
         # Combine detections and color lookups
         all_detections = sv.Detections.merge([player_detections, goalie_detections])
-        color_lookup = np.concatenate([player_team_ids, goalie_team_ids]) if len(player_team_ids) > 0 else goalie_team_ids
+        if len(player_team_ids) > 0:
+            color_lookup = np.concatenate([player_team_ids, goalie_team_ids]).astype(np.int32)
+        else:
+            color_lookup = goalie_team_ids.astype(np.int32)
         
         # Get jersey numbers for all tracked players
         jersey_numbers = get_jersey_numbers(frame, all_detections)
