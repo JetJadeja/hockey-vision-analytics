@@ -2,12 +2,14 @@ import argparse
 from enum import Enum
 from typing import Iterator, List
 import os
+import re
 
 import cv2
 import numpy as np
 import supervision as sv
 from tqdm import tqdm
 from ultralytics import YOLO
+import easyocr
 
 # Import your hockey-specific modules
 from common.puck import PuckTracker, PuckAnnotator
@@ -20,16 +22,17 @@ DATA_DIR = os.path.join(PARENT_DIR, 'data')
 PLAYER_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-player-detection.pt')
 PUCK_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-puck-detection.pt')
 
-# !! IMPORTANT !!: Update these class IDs to match your trained models
+# !! IMPORTANT !!: Updated class IDs to match your 2-class model (data_players_only.yaml)
 # Player detection model classes
-PLAYER_CLASS_ID = 0
-GOALKEEPER_CLASS_ID = 1
-REFEREE_CLASS_ID = 2
+PLAYER_CLASS_ID = 0      # 'player' class  
+GOALKEEPER_CLASS_ID = 1  # 'goalie' class
+# Note: REFEREE_CLASS_ID removed - not in current 2-class model
+
 # Puck detection model class
 PUCK_CLASS_ID = 0
 
 # --- Annotators ---
-COLORS = ['#FF1493', '#00BFFF', '#FF6347'] # Team1, Team2, Referee
+COLORS = ['#FF1493', '#00BFFF', '#FF6347'] # Team1, Team2, Goalies
 BOX_ANNOTATOR = sv.BoxAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
 ELLIPSE_ANNOTATOR = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
 LABEL_ANNOTATOR = sv.LabelAnnotator(
@@ -37,6 +40,15 @@ LABEL_ANNOTATOR = sv.LabelAnnotator(
     text_color=sv.Color.from_hex('#000000'),
     text_padding=2
 )
+
+# Initialize OCR reader for jersey number detection
+OCR_READER = None
+
+def get_ocr_reader():
+    global OCR_READER
+    if OCR_READER is None:
+        OCR_READER = easyocr.Reader(['en'], gpu=False)
+    return OCR_READER
 
 class Mode(Enum):
     PLAYER_DETECTION = 'PLAYER_DETECTION'
@@ -47,6 +59,63 @@ class Mode(Enum):
 def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
     return [sv.crop_image(frame, xyxy) for xyxy in detections.xyxy]
 
+def detect_jersey_number(player_crop: np.ndarray) -> str:
+    """
+    Detect jersey number from player crop using OCR.
+    Returns the detected number or 'none' if no valid number found.
+    """
+    try:
+        # Resize crop for better OCR
+        height, width = player_crop.shape[:2]
+        if height < 100 or width < 50:
+            return "none"
+        
+        # Focus on the upper body area where numbers typically are
+        upper_crop = player_crop[:int(height * 0.7), :]
+        
+        # Convert to grayscale and enhance contrast
+        gray = cv2.cvtColor(upper_crop, cv2.COLOR_BGR2GRAY)
+        
+        # Apply threshold to make text more visible
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # OCR detection
+        reader = get_ocr_reader()
+        results = reader.readtext(thresh, allowlist='0123456789')
+        
+        # Filter for valid jersey numbers (1-99)
+        valid_numbers = []
+        for (bbox, text, confidence) in results:
+            if confidence > 0.5:  # Confidence threshold
+                # Extract numbers only
+                numbers = re.findall(r'\d+', text)
+                for num in numbers:
+                    if 1 <= int(num) <= 99:  # Valid jersey number range
+                        valid_numbers.append(num)
+        
+        if valid_numbers:
+            # Return the most likely number (first one with highest confidence)
+            return valid_numbers[0]
+        else:
+            return "none"
+            
+    except Exception:
+        return "none"
+
+def get_jersey_numbers(frame: np.ndarray, detections: sv.Detections) -> List[str]:
+    """Get jersey numbers for all detected players."""
+    if len(detections) == 0:
+        return []
+    
+    crops = get_crops(frame, detections)
+    numbers = []
+    
+    for crop in crops:
+        number = detect_jersey_number(crop)
+        numbers.append(number)
+    
+    return numbers
+
 # --- Processing Functions ---
 
 def run_player_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
@@ -55,9 +124,19 @@ def run_player_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
         
+        # Filter for valid classes only (player and goalie)
+        valid_detections = detections[
+            (detections.class_id == PLAYER_CLASS_ID) | 
+            (detections.class_id == GOALKEEPER_CLASS_ID)
+        ]
+        
+        # Get jersey numbers
+        jersey_numbers = get_jersey_numbers(frame, valid_detections)
+        labels = [f"#{num}" if num != "none" else "none" for num in jersey_numbers]
+        
         annotated_frame = frame.copy()
-        annotated_frame = BOX_ANNOTATOR.annotate(annotated_frame, detections)
-        annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, detections)
+        annotated_frame = BOX_ANNOTATOR.annotate(annotated_frame, valid_detections)
+        annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, valid_detections, labels=labels)
         yield annotated_frame
 
 def run_puck_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
@@ -85,22 +164,54 @@ def run_player_tracking(source_path: str, device: str) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
     
+    # Dictionary to store jersey numbers for each tracker ID
+    tracker_jersey_numbers = {}
+    
     for frame in sv.get_video_frames_generator(source_path=source_path):
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
-        detections = tracker.update_with_detections(detections)
         
-        labels = [f"#{tracker_id}" for tracker_id in detections.tracker_id]
+        # Filter for valid classes only (player and goalie)
+        valid_detections = detections[
+            (detections.class_id == PLAYER_CLASS_ID) | 
+            (detections.class_id == GOALKEEPER_CLASS_ID)
+        ]
+        
+        tracked_detections = tracker.update_with_detections(valid_detections)
+        
+        # Get jersey numbers for current detections
+        jersey_numbers = get_jersey_numbers(frame, tracked_detections)
+        
+        # Update tracker jersey number mapping
+        for i, tracker_id in enumerate(tracked_detections.tracker_id):
+            if i < len(jersey_numbers) and jersey_numbers[i] != "none":
+                # If we detect a number, update the mapping
+                tracker_jersey_numbers[tracker_id] = jersey_numbers[i]
+            elif tracker_id not in tracker_jersey_numbers:
+                # If no number detected and no previous mapping, set to none
+                tracker_jersey_numbers[tracker_id] = "none"
+        
+        # Create labels using stored jersey numbers
+        labels = []
+        for tracker_id in tracked_detections.tracker_id:
+            jersey_num = tracker_jersey_numbers.get(tracker_id, "none")
+            if jersey_num != "none":
+                labels.append(f"#{jersey_num}")
+            else:
+                labels.append("none")
         
         annotated_frame = frame.copy()
-        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections)
-        annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, detections, labels=labels)
+        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, tracked_detections)
+        annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, tracked_detections, labels=labels)
         yield annotated_frame
         
 def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
+    
+    # Dictionary to store jersey numbers for each tracker ID
+    tracker_jersey_numbers = {}
     
     # First pass: collect player crops to train classifier
     print("Collecting player crops for team classification...")
@@ -120,22 +231,51 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
     for frame in sv.get_video_frames_generator(source_path=source_path):
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
-        detections = tracker.update_with_detections(detections)
         
-        # Classify teams for players
-        player_detections = detections[detections.class_id == PLAYER_CLASS_ID]
-        player_crops = get_crops(frame, player_detections)
-        player_team_ids = team_classifier.predict(player_crops)
+        # Filter for valid classes only
+        valid_detections = detections[
+            (detections.class_id == PLAYER_CLASS_ID) | 
+            (detections.class_id == GOALKEEPER_CLASS_ID)
+        ]
+        
+        tracked_detections = tracker.update_with_detections(valid_detections)
+        
+        # Classify teams for players only
+        player_detections = tracked_detections[tracked_detections.class_id == PLAYER_CLASS_ID]
+        goalie_detections = tracked_detections[tracked_detections.class_id == GOALKEEPER_CLASS_ID]
+        
+        # Get team classifications for players
+        if len(player_detections) > 0:
+            player_crops = get_crops(frame, player_detections)
+            player_team_ids = team_classifier.predict(player_crops)
+        else:
+            player_team_ids = np.array([])
 
-        # Handle referees (optional, assuming they have their own class)
-        referee_detections = detections[detections.class_id == REFEREE_CLASS_ID]
-        referee_team_ids = [REFEREE_CLASS_ID] * len(referee_detections)
+        # Assign goalies to team 2 (different color)
+        goalie_team_ids = np.array([2] * len(goalie_detections))
         
         # Combine detections and color lookups
-        all_detections = sv.Detections.merge([player_detections, referee_detections])
-        color_lookup = np.array(player_team_ids.tolist() + referee_team_ids)
+        all_detections = sv.Detections.merge([player_detections, goalie_detections])
+        color_lookup = np.concatenate([player_team_ids, goalie_team_ids]) if len(player_team_ids) > 0 else goalie_team_ids
         
-        labels = [f"#{tracker_id}" for tracker_id in all_detections.tracker_id]
+        # Get jersey numbers for all tracked players
+        jersey_numbers = get_jersey_numbers(frame, all_detections)
+        
+        # Update tracker jersey number mapping
+        for i, tracker_id in enumerate(all_detections.tracker_id):
+            if i < len(jersey_numbers) and jersey_numbers[i] != "none":
+                tracker_jersey_numbers[tracker_id] = jersey_numbers[i]
+            elif tracker_id not in tracker_jersey_numbers:
+                tracker_jersey_numbers[tracker_id] = "none"
+        
+        # Create labels using stored jersey numbers
+        labels = []
+        for tracker_id in all_detections.tracker_id:
+            jersey_num = tracker_jersey_numbers.get(tracker_id, "none")
+            if jersey_num != "none":
+                labels.append(f"#{jersey_num}")
+            else:
+                labels.append("none")
         
         annotated_frame = frame.copy()
         annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, all_detections, custom_color_lookup=color_lookup)
