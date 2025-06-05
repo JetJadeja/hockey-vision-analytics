@@ -44,9 +44,9 @@ ANNOTATOR = SmoothAnnotator(BASE_ANNOTATOR, smoothing_factor=0.3)
 LABEL_ANNOTATOR = sv.LabelAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
     text_color=sv.Color.from_hex('#FFFFFF'),
-    text_padding=4,
-    text_scale=0.5,
-    text_thickness=1
+    text_padding=5,
+    text_scale=0.6,
+    text_thickness=2
 )
 
 class Mode(Enum):
