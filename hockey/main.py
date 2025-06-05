@@ -14,6 +14,7 @@ import easyocr
 # Import your hockey-specific modules
 from common.puck import PuckTracker, PuckAnnotator
 from common.team import TeamClassifier
+from annotators.segmentation_annotator import SegmentationAnnotator
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
@@ -208,21 +209,33 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
+    segmentation_annotator = SegmentationAnnotator(alpha=0.4)
     
     # Dictionary to store jersey numbers for each tracker ID
     tracker_jersey_numbers = {}
     
     # Fit classifier with sample frames
-    print("Fitting team classifier...")
+    print("Initializing team classification...")
     crops = []
     positions = []
+    first_frame = None
+    first_detections = None
+    
+    # Find a good frame for interactive selection
     frame_generator = sv.get_video_frames_generator(source_path=source_path, stride=10)
     for i, frame in enumerate(frame_generator):
         if i > 20:  # Just sample first 20 frames for fitting
             break
+        
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         player_detections = sv.Detections.from_ultralytics(result)
         player_detections = player_detections[player_detections.class_id == PLAYER_CLASS_ID]
+        
+        # Look for frame with good player visibility
+        if first_frame is None and len(player_detections) >= 6:
+            first_frame = frame
+            first_detections = player_detections
+        
         crops.extend(get_crops(frame, player_detections))
         
         # Extract center positions of bounding boxes
@@ -232,7 +245,7 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
                 center_y = (xyxy[1] + xyxy[3]) / 2
                 positions.append((center_x, center_y))
     
-    team_classifier.fit(crops, positions=positions)
+    team_classifier.fit(crops, positions=positions, frame=first_frame, detections=first_detections)
     print("Classifier fitted.")
 
     # Process video and apply team colors
@@ -300,6 +313,18 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
                 labels.append("none")
         
         annotated_frame = frame.copy()
+        
+        # Apply segmentation visualization if available
+        segmentation_masks = team_classifier.get_segmentation_masks(all_detections.tracker_id.tolist())
+        if segmentation_masks:
+            annotated_frame = segmentation_annotator.annotate(
+                annotated_frame, 
+                all_detections, 
+                segmentation_masks,
+                color_lookup
+            )
+        
+        # Apply regular annotations on top
         annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, all_detections, custom_color_lookup=color_lookup)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, all_detections, labels, custom_color_lookup=color_lookup)
         yield annotated_frame

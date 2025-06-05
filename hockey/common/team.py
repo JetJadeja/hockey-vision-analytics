@@ -2,6 +2,7 @@ from typing import List, Dict, Optional, Tuple
 import numpy as np
 import cv2
 from collections import defaultdict
+import supervision as sv
 
 # Import the hybrid classifier
 try:
@@ -17,6 +18,20 @@ try:
 except ImportError:
     ROBUST_AVAILABLE = False
 
+# Import the interactive classifier
+try:
+    from .team_interactive import InteractiveTeamClassifier
+    INTERACTIVE_AVAILABLE = True
+except ImportError:
+    INTERACTIVE_AVAILABLE = False
+
+# Import the segmentation classifier
+try:
+    from .team_segmentation import SegmentationTeamClassifier
+    SEGMENTATION_AVAILABLE = True
+except ImportError:
+    SEGMENTATION_AVAILABLE = False
+
 
 
 class TeamClassifier:
@@ -25,14 +40,22 @@ class TeamClassifier:
     Uses basic color analysis to distinguish teams without complex ML.
     """
     
-    def __init__(self, device: str = 'cpu', batch_size: int = 32, use_hybrid: bool = True, use_robust: bool = True):
+    def __init__(self, device: str = 'cpu', batch_size: int = 32, use_hybrid: bool = True, use_robust: bool = True, use_interactive: bool = True, use_segmentation: bool = True):
         # Keep interface compatible but ignore device/batch_size for this simple approach
         self.device = device
         self.batch_size = batch_size
-        self.use_robust = use_robust and ROBUST_AVAILABLE
-        self.use_hybrid = use_hybrid and HYBRID_AVAILABLE and not self.use_robust
+        self.use_segmentation = use_segmentation and SEGMENTATION_AVAILABLE
+        self.use_interactive = use_interactive and INTERACTIVE_AVAILABLE and not self.use_segmentation
+        self.use_robust = use_robust and ROBUST_AVAILABLE and not self.use_interactive and not self.use_segmentation
+        self.use_hybrid = use_hybrid and HYBRID_AVAILABLE and not self.use_robust and not self.use_interactive and not self.use_segmentation
         
-        if self.use_robust:
+        if self.use_segmentation:
+            # Use segmentation-based classifier
+            self.segmentation_classifier = SegmentationTeamClassifier(device=device, visualize_segmentation=True)
+        elif self.use_interactive:
+            # Use interactive classifier with user selection
+            self.interactive_classifier = InteractiveTeamClassifier(device=device)
+        elif self.use_robust:
             # Use state-of-the-art robust classifier
             self.robust_classifier = RobustTeamClassifier(device=device)
         elif self.use_hybrid:
@@ -105,12 +128,49 @@ class TeamClassifier:
         
         return team, confidence
     
-    def fit(self, crops: List[np.ndarray], positions: Optional[List[tuple]] = None) -> None:
+    def fit(self, crops: List[np.ndarray], positions: Optional[List[tuple]] = None, 
+            frame: Optional[np.ndarray] = None, detections: Optional[sv.Detections] = None) -> None:
         """
         Fit the classifier on training crops.
-        Uses robust approach if available, then hybrid, otherwise simple analysis.
+        For interactive classifier, needs frame and detections for user selection.
         """
-        if self.use_robust:
+        if self.use_segmentation:
+            # Use segmentation classifier
+            try:
+                self.segmentation_classifier.fit(crops, positions=positions)
+            except Exception as e:
+                print(f"Segmentation classifier failed: {e}")
+                print("Falling back to interactive classifier")
+                self.use_segmentation = False
+                self.use_interactive = INTERACTIVE_AVAILABLE
+                if self.use_interactive:
+                    self.interactive_classifier = InteractiveTeamClassifier(device=self.device)
+                    self.fit(crops, positions, frame, detections)
+                else:
+                    self._simple_fit(crops)
+        elif self.use_interactive:
+            # Interactive classifier needs frame and detections
+            if frame is not None and detections is not None:
+                success = self.interactive_classifier.initialize_from_user_selection(frame, detections)
+                if not success:
+                    print("Interactive selection cancelled. Falling back to robust classifier.")
+                    self.use_interactive = False
+                    self.use_robust = ROBUST_AVAILABLE
+                    if self.use_robust:
+                        self.robust_classifier = RobustTeamClassifier(device=self.device)
+                        self.fit(crops, positions)
+                    else:
+                        self._simple_fit(crops)
+            else:
+                print("Interactive classifier needs frame and detections. Falling back.")
+                self.use_interactive = False
+                self.use_robust = ROBUST_AVAILABLE
+                if self.use_robust:
+                    self.robust_classifier = RobustTeamClassifier(device=self.device)
+                    self.fit(crops, positions)
+                else:
+                    self._simple_fit(crops)
+        elif self.use_robust:
             # Use robust classifier
             try:
                 self.robust_classifier.fit(crops, positions=positions)
@@ -160,6 +220,30 @@ class TeamClassifier:
         """
         if not crops:
             return np.array([])
+        
+        if self.use_segmentation:
+            # Use segmentation classifier
+            try:
+                return self.segmentation_classifier.predict(crops, tracker_ids, positions)
+            except Exception as e:
+                print(f"Segmentation prediction failed: {e}")
+                print("Falling back to interactive classifier")
+                self.use_segmentation = False
+                self.use_interactive = INTERACTIVE_AVAILABLE
+                if self.use_interactive:
+                    self.interactive_classifier = InteractiveTeamClassifier(device=self.device)
+        
+        if self.use_interactive:
+            # Use interactive classifier
+            try:
+                return self.interactive_classifier.predict(crops, tracker_ids)
+            except Exception as e:
+                print(f"Interactive prediction failed: {e}")
+                print("Falling back to robust classifier")
+                self.use_interactive = False
+                self.use_robust = ROBUST_AVAILABLE
+                if self.use_robust:
+                    self.robust_classifier = RobustTeamClassifier(device=self.device)
         
         if self.use_robust:
             # Use robust classifier
@@ -213,3 +297,11 @@ class TeamClassifier:
             predictions.append(team)
         
         return np.array(predictions)
+    
+    def get_segmentation_masks(self, tracker_ids: List[int]) -> Optional[Dict[int, np.ndarray]]:
+        """
+        Get segmentation masks if using segmentation classifier.
+        """
+        if self.use_segmentation and hasattr(self, 'segmentation_classifier'):
+            return self.segmentation_classifier.get_segmentation_masks(tracker_ids)
+        return None
