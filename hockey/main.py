@@ -74,7 +74,7 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
     rink_map_visualizer = None
     if show_2d_map:
         rink_config = HockeyRinkConfiguration()
-        rink_map_visualizer = RinkMapVisualizer(rink_config, scale=1.0, padding=20)
+        rink_map_visualizer = RinkMapVisualizer(rink_config, scale=3.0, padding=20)
         print("2D rink map visualization enabled")
     
     # Fit classifier with sample frames
