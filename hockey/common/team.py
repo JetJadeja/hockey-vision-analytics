@@ -49,6 +49,9 @@ class TeamClassifier:
         self.use_robust = use_robust and ROBUST_AVAILABLE and not self.use_interactive and not self.use_segmentation
         self.use_hybrid = use_hybrid and HYBRID_AVAILABLE and not self.use_robust and not self.use_interactive and not self.use_segmentation
         
+        # Team names storage
+        self.team_names = {0: "Team 0", 1: "Team 1"}  # Default names
+        
         if self.use_segmentation:
             # Use segmentation-based classifier
             self.segmentation_classifier = SegmentationTeamClassifier(device=device, visualize_segmentation=True)
@@ -305,3 +308,24 @@ class TeamClassifier:
         if self.use_segmentation and hasattr(self, 'segmentation_classifier'):
             return self.segmentation_classifier.get_segmentation_masks(tracker_ids)
         return None
+    
+    def set_team_names(self, team_names: Dict[int, str]) -> None:
+        """
+        Set custom team names.
+        
+        Args:
+            team_names: Dictionary mapping team ID to team name
+        """
+        self.team_names.update(team_names)
+    
+    def get_team_name(self, team_id: int) -> str:
+        """
+        Get team name for a given team ID.
+        
+        Args:
+            team_id: Team ID (0 or 1)
+            
+        Returns:
+            Team name string
+        """
+        return self.team_names.get(team_id, f"Team {team_id}")

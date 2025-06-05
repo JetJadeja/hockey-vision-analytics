@@ -13,6 +13,7 @@ from ultralytics import YOLO
 from common.puck import PuckTracker, PuckAnnotator
 from common.team import TeamClassifier
 from common.smooth_annotator import SmoothAnnotator
+from common.team_selector import InteractiveTeamSelector
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
@@ -133,6 +134,7 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
+    team_selector = InteractiveTeamSelector()
     
     # Fit classifier with sample frames
     print("Initializing team classification...")
@@ -140,9 +142,12 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
     positions = []
     first_frame = None
     first_detections = None
+    first_tracked_detections = None
     
     # Find a good frame for interactive selection
     frame_generator = sv.get_video_frames_generator(source_path=source_path, stride=10)
+    temp_tracker = sv.ByteTrack(minimum_consecutive_frames=1)
+    
     for i, frame in enumerate(frame_generator):
         if i > 20:  # Just sample first 20 frames for fitting
             break
@@ -151,10 +156,14 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
         player_detections = sv.Detections.from_ultralytics(result)
         player_detections = player_detections[player_detections.class_id == PLAYER_CLASS_ID]
         
+        # Track detections for interactive selection
+        tracked_dets = temp_tracker.update_with_detections(player_detections)
+        
         # Look for frame with good player visibility
-        if first_frame is None and len(player_detections) >= 6:
+        if first_frame is None and len(tracked_dets) >= 6:
             first_frame = frame
             first_detections = player_detections
+            first_tracked_detections = tracked_dets
         
         crops.extend(get_crops(frame, player_detections))
         
@@ -164,6 +173,18 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
                 center_x = (xyxy[0] + xyxy[2]) / 2
                 center_y = (xyxy[1] + xyxy[3]) / 2
                 positions.append((center_x, center_y))
+    
+    # Interactive team selection
+    team_selection = None
+    if first_frame is not None and first_tracked_detections is not None:
+        team_selection = team_selector.select_teams(first_frame, first_tracked_detections)
+    
+    if team_selection:
+        # Set team names in classifier
+        team_classifier.set_team_names(team_selection.team_names)
+        print(f"Teams set: {team_selection.team_names[0]} vs {team_selection.team_names[1]}")
+    else:
+        print("Team selection cancelled, using default team names")
     
     team_classifier.fit(crops, positions=positions, frame=first_frame, detections=first_detections)
     print("Classifier fitted.")
@@ -213,16 +234,16 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
         else:
             color_lookup = goalie_team_ids.astype(np.int32)
         
-        # Create labels with team and tracker information
+        # Create labels with team names for players and 'Goalie' for goalies
         labels = []
         for i, (tracker_id, class_id) in enumerate(zip(all_detections.tracker_id, all_detections.class_id)):
             if class_id == PLAYER_CLASS_ID and i < len(player_team_ids):
-                team_name = f"Team {player_team_ids[i]}"
-                labels.append(f"{team_name} {tracker_id}")
+                team_name = team_classifier.get_team_name(player_team_ids[i])
+                labels.append(team_name)
             elif class_id == GOALKEEPER_CLASS_ID:
-                labels.append(f"Goalie {tracker_id}")
+                labels.append("Goalie")
             else:
-                labels.append(f"Player {tracker_id}")
+                labels.append("Player")
         
         annotated_frame = frame.copy()
         
