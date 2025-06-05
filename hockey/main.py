@@ -14,6 +14,7 @@ from common.team import TeamClassifier
 from common.smooth_annotator import SmoothAnnotator
 from common.team_selector import InteractiveTeamSelector
 from common.styled_label_annotator import StyledLabelAnnotator
+from common.rink_keypoint_detector import RinkKeypointDetector
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
@@ -21,6 +22,7 @@ PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(PARENT_DIR, 'data')
 PLAYER_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-player-detection.pt')
 PUCK_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-puck-detection.pt')
+HOCKEY_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-detection.pt')
 
 # !! IMPORTANT !!: Updated class IDs to match your 2-class model (data_players_only.yaml)
 # Player detection model classes
@@ -59,6 +61,12 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
     team_selector = InteractiveTeamSelector()
+    
+    # Initialize rink keypoint detector if enabled
+    rink_detector = None
+    if rink_keypoints:
+        rink_detector = RinkKeypointDetector(HOCKEY_DETECTION_MODEL_PATH)
+        print("Rink keypoint detection enabled")
     
     # Fit classifier with sample frames
     print("Initializing team classification...")
@@ -174,14 +182,23 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
         # Apply regular annotations only (segmentation removed)
         annotated_frame = ANNOTATOR.annotate(annotated_frame, all_detections, custom_color_lookup=color_lookup)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, all_detections, labels, custom_color_lookup=color_lookup)
+        
+        # Apply rink keypoint detection if enabled
+        if rink_detector is not None:
+            keypoints = rink_detector.detect_keypoints(annotated_frame, conf_threshold=0.3)
+            if keypoints:
+                annotated_frame = rink_detector.visualize_keypoints(
+                    annotated_frame, 
+                    keypoints,
+                    radius=10,
+                    show_labels=True
+                )
+        
         yield annotated_frame
 
 # --- Main Function ---
 
 def main(source_path: str, target_path: str, device: str, rink_keypoints: bool):
-    if rink_keypoints:
-        print("Rink keypoint detection enabled (not implemented yet)")
-    
     frame_generator = process_hockey_video(source_path, device, rink_keypoints)
 
     if target_path:
@@ -206,7 +223,7 @@ if __name__ == '__main__':
     parser.add_argument('--source_path', type=str, required=True, help='Path to the source video file.')
     parser.add_argument('--target_path', type=str, default=None, help='Path to save the output video.')
     parser.add_argument('--device', type=str, default='cpu', help="Device to run models on ('cpu', 'cuda', 'mps').")
-    parser.add_argument('--rink-keypoints', action='store_true', help='Enable rink keypoint detection (not implemented yet).')
+    parser.add_argument('--rink-keypoints', action='store_true', help='Enable rink keypoint detection for ice surface elements.')
     
     args = parser.parse_args()
     main(
