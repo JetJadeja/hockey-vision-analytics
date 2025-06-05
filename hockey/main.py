@@ -239,14 +239,49 @@ def main(source_path: str, target_path: str, device: str, rink_keypoints: bool, 
     frame_generator = process_hockey_video(source_path, device, rink_keypoints, show_2d_map)
 
     if target_path:
+        # Get original video info
         video_info = sv.VideoInfo.from_video_path(source_path)
-        with sv.VideoSink(target_path, video_info) as sink:
+        
+        # If using 2D map, we need to peek at first frame to get actual dimensions
+        if show_2d_map:
+            # Convert generator to list to peek at first frame
+            frames_list = []
+            first_frame = None
+            
+            # Process frames
             for frame in tqdm(frame_generator, total=video_info.total_frames):
-                sink.write_frame(frame)
+                if first_frame is None:
+                    first_frame = frame
+                    # Update video info with new dimensions
+                    new_height, new_width = frame.shape[:2]
+                    video_info.width = new_width
+                    video_info.height = new_height
+                    # Create video sink with updated dimensions
+                    sink = sv.VideoSink(target_path, video_info)
+                    sink.__enter__()
+                
+                try:
+                    sink.write_frame(frame)
+                except Exception as e:
+                    print(f"Error writing frame: {e}")
+                    
                 cv2.imshow("Hockey Vision", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
-    else: # If no target path, just display
+            
+            # Close the sink
+            if first_frame is not None:
+                sink.__exit__(None, None, None)
+        else:
+            # Normal processing without 2D map
+            with sv.VideoSink(target_path, video_info) as sink:
+                for frame in tqdm(frame_generator, total=video_info.total_frames):
+                    sink.write_frame(frame)
+                    cv2.imshow("Hockey Vision", frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+    else:
+        # If no target path, just display
         for frame in frame_generator:
             cv2.imshow("Hockey Vision", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
