@@ -15,6 +15,8 @@ from common.smooth_annotator import SmoothAnnotator
 from common.team_selector import InteractiveTeamSelector
 from common.styled_label_annotator import StyledLabelAnnotator
 from common.rink_keypoint_detector import RinkKeypointDetector
+from annotators.rink_annotator import RinkMapVisualizer
+from configs.hockey import HockeyRinkConfiguration
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
@@ -56,7 +58,7 @@ def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
 
 # --- Main Processing Function ---
 
-def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = False) -> Iterator[np.ndarray]:
+def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = False, show_2d_map: bool = False) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
@@ -67,6 +69,13 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
     if rink_keypoints:
         rink_detector = RinkKeypointDetector(HOCKEY_DETECTION_MODEL_PATH)
         print("Rink keypoint detection enabled")
+    
+    # Initialize rink map visualizer if enabled
+    rink_map_visualizer = None
+    if show_2d_map:
+        rink_config = HockeyRinkConfiguration()
+        rink_map_visualizer = RinkMapVisualizer(rink_config, scale=1.0, padding=20)
+        print("2D rink map visualization enabled")
     
     # Fit classifier with sample frames
     print("Initializing team classification...")
@@ -183,23 +192,51 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
         annotated_frame = ANNOTATOR.annotate(annotated_frame, all_detections, custom_color_lookup=color_lookup)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, all_detections, labels, custom_color_lookup=color_lookup)
         
-        # Apply rink keypoint detection if enabled
-        if rink_detector is not None:
-            keypoints = rink_detector.detect_keypoints(annotated_frame, conf_threshold=0.3)
+        # Detect keypoints once if either feature is enabled
+        keypoints = None
+        if rink_detector is not None or rink_map_visualizer is not None:
+            if rink_detector is not None:
+                keypoints = rink_detector.detect_keypoints(annotated_frame, conf_threshold=0.3)
+            else:
+                # Use a temporary detector just for keypoints
+                temp_detector = RinkKeypointDetector(HOCKEY_DETECTION_MODEL_PATH)
+                keypoints = temp_detector.detect_keypoints(annotated_frame, conf_threshold=0.3)
+        
+        # Apply rink keypoint visualization if enabled
+        if rink_detector is not None and keypoints:
+            annotated_frame = rink_detector.visualize_keypoints(
+                annotated_frame, 
+                keypoints,
+                radius=10,
+                show_labels=True
+            )
+        
+        # Apply 2D rink map visualization if enabled
+        if rink_map_visualizer is not None and len(all_detections) > 0:
+            # Update camera view based on keypoints
             if keypoints:
-                annotated_frame = rink_detector.visualize_keypoints(
-                    annotated_frame, 
-                    keypoints,
-                    radius=10,
-                    show_labels=True
-                )
+                rink_map_visualizer.update_camera_view(keypoints, annotated_frame.shape[:2])
+            
+            # Extract player positions (center of bounding boxes)
+            player_positions = []
+            for xyxy in all_detections.xyxy:
+                center_x = (xyxy[0] + xyxy[2]) / 2
+                center_y = (xyxy[1] + xyxy[3]) / 2
+                player_positions.append((center_x, center_y))
+            
+            # Create combined view with video and 2D map
+            annotated_frame = rink_map_visualizer.create_combined_view(
+                video_frame=annotated_frame,
+                player_positions=player_positions,
+                team_assignments=color_lookup
+            )
         
         yield annotated_frame
 
 # --- Main Function ---
 
-def main(source_path: str, target_path: str, device: str, rink_keypoints: bool):
-    frame_generator = process_hockey_video(source_path, device, rink_keypoints)
+def main(source_path: str, target_path: str, device: str, rink_keypoints: bool, show_2d_map: bool):
+    frame_generator = process_hockey_video(source_path, device, rink_keypoints, show_2d_map)
 
     if target_path:
         video_info = sv.VideoInfo.from_video_path(source_path)
@@ -224,11 +261,13 @@ if __name__ == '__main__':
     parser.add_argument('--target_path', type=str, default=None, help='Path to save the output video.')
     parser.add_argument('--device', type=str, default='cpu', help="Device to run models on ('cpu', 'cuda', 'mps').")
     parser.add_argument('--rink-keypoints', action='store_true', help='Enable rink keypoint detection for ice surface elements.')
+    parser.add_argument('--show-2d-map', action='store_true', help='Show 2D rink map with player positions below video.')
     
     args = parser.parse_args()
     main(
         source_path=args.source_path,
         target_path=args.target_path,
         device=args.device,
-        rink_keypoints=args.rink_keypoints
+        rink_keypoints=args.rink_keypoints,
+        show_2d_map=args.show_2d_map
     )

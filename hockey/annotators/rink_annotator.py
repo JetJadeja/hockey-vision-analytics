@@ -1,8 +1,12 @@
 import cv2
 import supervision as sv
 import numpy as np
+from typing import List, Tuple, Optional, Dict
 
-from hockey.configs.hockey import HockeyRinkConfiguration
+from configs.hockey import HockeyRinkConfiguration
+from common.camera_view_detector import CameraViewDetector, ViewInfo
+from common.view_mappers import AdaptiveMapper
+from common.rink_keypoint_detector import RinkKeypoint
 
 def draw_rink(
     config: HockeyRinkConfiguration,
@@ -163,6 +167,200 @@ def draw_rink(
     draw_faceoff_hash_marks((right_faceoff_x, faceoff_y2), red_color)
 
     return rink_image
+
+class RinkMapVisualizer:
+    """
+    Visualizes player positions on a 2D rink map with camera-aware mapping.
+    """
+    
+    def __init__(
+        self, 
+        config: HockeyRinkConfiguration,
+        scale: float = 1.5,
+        padding: int = 30,
+        team_colors: Optional[Dict[int, tuple]] = None
+    ):
+        """
+        Initialize the rink map visualizer.
+        
+        Args:
+            config: Hockey rink configuration
+            scale: Scale factor for the rink
+            padding: Padding around the rink
+            team_colors: Dictionary mapping team ID to BGR color tuple
+        """
+        self.config = config
+        self.scale = scale
+        self.padding = padding
+        
+        # Default team colors
+        self.team_colors = team_colors or {
+            0: (147, 20, 255),   # Deep pink for team 0
+            1: (255, 191, 0),    # Blue for team 1
+            2: (71, 99, 255)     # Red for goalies
+        }
+        
+        # Create base rink image
+        self.base_rink = draw_rink(
+            config=config,
+            scale=scale,
+            padding=padding,
+            line_thickness=2
+        )
+        
+        # Calculate rink dimensions for coordinate mapping
+        self.rink_width = int(config.width * scale)
+        self.rink_length = int(config.length * scale)
+        self.rink_left = padding
+        self.rink_right = self.rink_length + padding
+        self.rink_top = padding
+        self.rink_bottom = self.rink_width + padding
+        
+        # Camera-aware components
+        self.camera_detector = CameraViewDetector()
+        self.adaptive_mapper = AdaptiveMapper()
+        self.current_view_info = None
+        
+        # Store homography matrix if available
+        self.homography = None
+    
+    def set_homography(self, homography: np.ndarray):
+        """
+        Set homography matrix for coordinate transformation.
+        
+        Args:
+            homography: 3x3 homography matrix from video to rink coordinates
+        """
+        self.homography = homography
+    
+    def update_camera_view(self, keypoints: Optional[List[RinkKeypoint]], frame_shape: Tuple[int, int]):
+        """
+        Update camera view detection based on keypoints.
+        
+        Args:
+            keypoints: Detected rink keypoints
+            frame_shape: Shape of the video frame
+        """
+        self.current_view_info = self.camera_detector.classify_view(keypoints, frame_shape)
+        self.adaptive_mapper.update_view(self.current_view_info)
+    
+    def transform_point(self, point: Tuple[float, float], video_shape: Tuple[int, int]) -> Tuple[int, int]:
+        """
+        Transform a point from video coordinates to rink map coordinates.
+        
+        Args:
+            point: (x, y) in video coordinates
+            video_shape: (height, width) of the video frame
+            
+        Returns:
+            (x, y) in rink map coordinates
+        """
+        if self.homography is not None:
+            # Use homography if available
+            pt = np.array([[point[0], point[1]]], dtype=np.float32)
+            transformed = cv2.perspectiveTransform(pt.reshape(1, 1, 2), self.homography)
+            map_x, map_y = transformed[0, 0]
+            return int(map_x), int(map_y)
+        else:
+            # Use adaptive mapper based on camera view
+            rink_dimensions = (self.rink_length, self.rink_width)
+            return self.adaptive_mapper.transform_point(
+                point, video_shape, rink_dimensions, self.padding
+            )
+    
+    def draw_players(
+        self,
+        frame_shape: Tuple[int, int],
+        player_positions: List[Tuple[float, float]],
+        team_assignments: np.ndarray,
+        player_radius: int = 8
+    ) -> np.ndarray:
+        """
+        Draw players on the rink map.
+        
+        Args:
+            frame_shape: Shape of the video frame (height, width)
+            player_positions: List of (x, y) positions in video coordinates
+            team_assignments: Array of team IDs for each player
+            player_radius: Radius of player dots
+            
+        Returns:
+            Rink map with players drawn
+        """
+        # Create a copy of the base rink
+        rink_map = self.base_rink.copy()
+        
+        # Draw each player
+        for i, (pos, team_id) in enumerate(zip(player_positions, team_assignments)):
+            # Transform position to rink coordinates
+            map_x, map_y = self.transform_point(pos, frame_shape)
+            
+            # Get team color
+            color = self.team_colors.get(team_id, (255, 255, 255))
+            
+            # Draw player dot with outline
+            cv2.circle(rink_map, (map_x, map_y), player_radius, color, -1)
+            cv2.circle(rink_map, (map_x, map_y), player_radius, (0, 0, 0), 2)
+            
+            # Optional: Add player number if available
+            # cv2.putText(rink_map, str(i), (map_x-5, map_y+5), 
+            #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        return rink_map
+    
+    def create_combined_view(
+        self,
+        video_frame: np.ndarray,
+        player_positions: List[Tuple[float, float]],
+        team_assignments: np.ndarray,
+        gap: int = 20
+    ) -> np.ndarray:
+        """
+        Create a combined view with video on top and rink map below.
+        
+        Args:
+            video_frame: The annotated video frame
+            player_positions: List of player positions
+            team_assignments: Array of team IDs
+            gap: Gap between video and map
+            
+        Returns:
+            Combined frame
+        """
+        # Get rink map with players
+        rink_map = self.draw_players(
+            frame_shape=(video_frame.shape[0], video_frame.shape[1]),
+            player_positions=player_positions,
+            team_assignments=team_assignments
+        )
+        
+        # Resize rink map to match video width
+        video_height, video_width = video_frame.shape[:2]
+        map_height, map_width = rink_map.shape[:2]
+        
+        # Calculate scaling to fit width
+        scale_factor = video_width / map_width
+        new_map_height = int(map_height * scale_factor)
+        new_map_width = video_width
+        
+        # Resize rink map
+        resized_map = cv2.resize(rink_map, (new_map_width, new_map_height))
+        
+        # Create combined frame
+        total_height = video_height + gap + new_map_height
+        combined = np.zeros((total_height, video_width, 3), dtype=np.uint8)
+        
+        # Place video on top
+        combined[:video_height, :] = video_frame
+        
+        # Add separator line
+        combined[video_height:video_height+gap, :] = (128, 128, 128)
+        
+        # Place rink map below
+        combined[video_height+gap:, :] = resized_map
+        
+        return combined
+
 
 if __name__ == "__main__":
     # Create a standard hockey rink configuration
