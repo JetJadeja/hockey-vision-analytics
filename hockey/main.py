@@ -14,7 +14,6 @@ import easyocr
 # Import your hockey-specific modules
 from common.puck import PuckTracker, PuckAnnotator
 from common.team import TeamClassifier
-from annotators.segmentation_annotator import SegmentationAnnotator
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
@@ -34,8 +33,8 @@ PUCK_CLASS_ID = 0
 
 # --- Annotators ---
 COLORS = ['#FF1493', '#00BFFF', '#FF6347'] # Team1, Team2, Goalies
-BOX_ANNOTATOR = sv.BoxAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
-ELLIPSE_ANNOTATOR = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
+ANNOTATOR = sv.BoxAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
+# ANNOTATOR = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
 LABEL_ANNOTATOR = sv.LabelAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
     text_color=sv.Color.from_hex('#000000'),
@@ -136,7 +135,7 @@ def run_player_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
         labels = [f"#{num}" if num != "none" else "none" for num in jersey_numbers]
         
         annotated_frame = frame.copy()
-        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, valid_detections)
+        annotated_frame = ANNOTATOR.annotate(annotated_frame, valid_detections)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, valid_detections, labels=labels)
         yield annotated_frame
 
@@ -201,7 +200,7 @@ def run_player_tracking(source_path: str, device: str) -> Iterator[np.ndarray]:
                 labels.append("none")
         
         annotated_frame = frame.copy()
-        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, tracked_detections)
+        annotated_frame = ANNOTATOR.annotate(annotated_frame, tracked_detections)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, tracked_detections, labels=labels)
         yield annotated_frame
         
@@ -209,7 +208,6 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
-    segmentation_annotator = SegmentationAnnotator(alpha=0.4)
     
     # Dictionary to store jersey numbers for each tracker ID
     tracker_jersey_numbers = {}
@@ -314,18 +312,8 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
         
         annotated_frame = frame.copy()
         
-        # Apply segmentation visualization if available
-        segmentation_masks = team_classifier.get_segmentation_masks(all_detections.tracker_id.tolist())
-        if segmentation_masks:
-            annotated_frame = segmentation_annotator.annotate(
-                annotated_frame, 
-                all_detections, 
-                segmentation_masks,
-                color_lookup
-            )
-        
-        # Apply regular annotations on top
-        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, all_detections, custom_color_lookup=color_lookup)
+        # Apply regular annotations only (segmentation removed)
+        annotated_frame = ANNOTATOR.annotate(annotated_frame, all_detections, custom_color_lookup=color_lookup)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, all_detections, labels, custom_color_lookup=color_lookup)
         yield annotated_frame
 
