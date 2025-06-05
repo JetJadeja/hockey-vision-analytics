@@ -1,5 +1,4 @@
 import argparse
-from enum import Enum
 from typing import Iterator, List
 import os
 
@@ -50,92 +49,12 @@ LABEL_ANNOTATOR = sv.LabelAnnotator(
     text_thickness=2
 )
 
-class Mode(Enum):
-    PLAYER_DETECTION = 'PLAYER_DETECTION'
-    PUCK_DETECTION = 'PUCK_DETECTION'
-    PLAYER_TRACKING = 'PLAYER_TRACKING'
-    TEAM_CLASSIFICATION = 'TEAM_CLASSIFICATION'
-
 def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
     return [sv.crop_image(frame, xyxy) for xyxy in detections.xyxy]
 
-# --- Processing Functions ---
+# --- Main Processing Function ---
 
-def run_player_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
-    player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
-    for frame in sv.get_video_frames_generator(source_path=source_path):
-        result = player_model(frame, imgsz=1280, verbose=False)[0]
-        detections = sv.Detections.from_ultralytics(result)
-        
-        # Filter for valid classes only (player and goalie)
-        valid_detections = detections[
-            (detections.class_id == PLAYER_CLASS_ID) | 
-            (detections.class_id == GOALKEEPER_CLASS_ID)
-        ]
-        
-        # Create simple labels based on class
-        labels = []
-        for class_id in valid_detections.class_id:
-            if class_id == PLAYER_CLASS_ID:
-                labels.append("Player")
-            elif class_id == GOALKEEPER_CLASS_ID:
-                labels.append("Goalie")
-            else:
-                labels.append("Unknown")
-        
-        annotated_frame = frame.copy()
-        annotated_frame = ANNOTATOR.annotate(annotated_frame, valid_detections)
-        annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, valid_detections, labels=labels)
-        yield annotated_frame
-
-def run_puck_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
-    puck_model = YOLO(PUCK_DETECTION_MODEL_PATH).to(device=device)
-    puck_tracker = PuckTracker()
-    puck_annotator = PuckAnnotator(radius=5, buffer_size=15)
-    
-    slicer = sv.InferenceSlicer(
-        callback=lambda image_slice: sv.Detections.from_ultralytics(
-            puck_model(image_slice, imgsz=640, verbose=False)[0]
-        ),
-        slice_wh=(640, 640)
-    )
-
-    for frame in sv.get_video_frames_generator(source_path=source_path):
-        detections = slicer(frame).with_nms(threshold=0.1)
-        detections = puck_tracker.update(detections)
-        
-        annotated_frame = frame.copy()
-        annotated_frame = puck_annotator.annotate(annotated_frame, detections)
-        yield annotated_frame
-
-def run_player_tracking(source_path: str, device: str) -> Iterator[np.ndarray]:
-    player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
-    tracker = sv.ByteTrack(minimum_consecutive_frames=5)
-    
-    for frame in sv.get_video_frames_generator(source_path=source_path):
-        result = player_model(frame, imgsz=1280, verbose=False)[0]
-        detections = sv.Detections.from_ultralytics(result)
-        
-        # Filter for valid classes only (player and goalie)
-        valid_detections = detections[
-            (detections.class_id == PLAYER_CLASS_ID) | 
-            (detections.class_id == GOALKEEPER_CLASS_ID)
-        ]
-        
-        tracked_detections = tracker.update_with_detections(valid_detections)
-        
-        # Create labels with tracker ID and class
-        labels = []
-        for i, (tracker_id, class_id) in enumerate(zip(tracked_detections.tracker_id, tracked_detections.class_id)):
-            class_name = "Player" if class_id == PLAYER_CLASS_ID else "Goalie"
-            labels.append(f"{class_name} {tracker_id}")
-        
-        annotated_frame = frame.copy()
-        annotated_frame = ANNOTATOR.annotate(annotated_frame, tracked_detections)
-        annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, tracked_detections, labels=labels)
-        yield annotated_frame
-
-def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarray]:
+def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = False) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
@@ -257,19 +176,13 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, all_detections, labels, custom_color_lookup=color_lookup)
         yield annotated_frame
 
-# --- Main Orchestrator ---
+# --- Main Function ---
 
-def main(source_path: str, target_path: str, mode: Mode, device: str):
-    if mode == Mode.PLAYER_DETECTION:
-        frame_generator = run_player_detection(source_path, device)
-    elif mode == Mode.PUCK_DETECTION:
-        frame_generator = run_puck_detection(source_path, device)
-    elif mode == Mode.PLAYER_TRACKING:
-        frame_generator = run_player_tracking(source_path, device)
-    elif mode == Mode.TEAM_CLASSIFICATION:
-        frame_generator = run_team_classification(source_path, device)
-    else:
-        raise NotImplementedError(f"Mode {mode} is not implemented.")
+def main(source_path: str, target_path: str, device: str, rink_keypoints: bool):
+    if rink_keypoints:
+        print("Rink keypoint detection enabled (not implemented yet)")
+    
+    frame_generator = process_hockey_video(source_path, device, rink_keypoints)
 
     if target_path:
         video_info = sv.VideoInfo.from_video_path(source_path)
@@ -292,13 +205,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Hockey Vision Analytics')
     parser.add_argument('--source_path', type=str, required=True, help='Path to the source video file.')
     parser.add_argument('--target_path', type=str, default=None, help='Path to save the output video.')
-    parser.add_argument('--mode', type=Mode, default=Mode.PLAYER_DETECTION, choices=list(Mode), help='The processing mode.')
     parser.add_argument('--device', type=str, default='cpu', help="Device to run models on ('cpu', 'cuda', 'mps').")
+    parser.add_argument('--rink-keypoints', action='store_true', help='Enable rink keypoint detection (not implemented yet).')
     
     args = parser.parse_args()
     main(
         source_path=args.source_path,
         target_path=args.target_path,
-        mode=args.mode,
-        device=args.device
+        device=args.device,
+        rink_keypoints=args.rink_keypoints
     )
