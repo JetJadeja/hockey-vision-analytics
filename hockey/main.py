@@ -2,18 +2,17 @@ import argparse
 from enum import Enum
 from typing import Iterator, List
 import os
-import re
 
 import cv2
 import numpy as np
 import supervision as sv
 from tqdm import tqdm
 from ultralytics import YOLO
-import easyocr
 
 # Import your hockey-specific modules
 from common.puck import PuckTracker, PuckAnnotator
 from common.team import TeamClassifier
+from common.smooth_annotator import SmoothAnnotator
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
@@ -33,22 +32,17 @@ PUCK_CLASS_ID = 0
 
 # --- Annotators ---
 COLORS = ['#FF1493', '#00BFFF', '#FF6347'] # Team1, Team2, Goalies
-ANNOTATOR = sv.BoxAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
-# ANNOTATOR = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
+# Create base annotators
+# BASE_ANNOTATOR = sv.BoxAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
+BASE_ANNOTATOR = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
+
+# Wrap with smooth annotators for stable visualization
+ANNOTATOR = SmoothAnnotator(BASE_ANNOTATOR, smoothing_factor=0.3)
 LABEL_ANNOTATOR = sv.LabelAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
     text_color=sv.Color.from_hex('#000000'),
     text_padding=2
 )
-
-# Initialize OCR reader for jersey number detection
-OCR_READER = None
-
-def get_ocr_reader():
-    global OCR_READER
-    if OCR_READER is None:
-        OCR_READER = easyocr.Reader(['en'], gpu=False)
-    return OCR_READER
 
 class Mode(Enum):
     PLAYER_DETECTION = 'PLAYER_DETECTION'
@@ -58,63 +52,6 @@ class Mode(Enum):
 
 def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
     return [sv.crop_image(frame, xyxy) for xyxy in detections.xyxy]
-
-def detect_jersey_number(player_crop: np.ndarray) -> str:
-    """
-    Detect jersey number from player crop using OCR.
-    Returns the detected number or 'none' if no valid number found.
-    """
-    try:
-        # Resize crop for better OCR
-        height, width = player_crop.shape[:2]
-        if height < 100 or width < 50:
-            return "none"
-        
-        # Focus on the upper body area where numbers typically are
-        upper_crop = player_crop[:int(height * 0.7), :]
-        
-        # Convert to grayscale and enhance contrast
-        gray = cv2.cvtColor(upper_crop, cv2.COLOR_BGR2GRAY)
-        
-        # Apply threshold to make text more visible
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        
-        # OCR detection
-        reader = get_ocr_reader()
-        results = reader.readtext(thresh, allowlist='0123456789')
-        
-        # Filter for valid jersey numbers (1-99)
-        valid_numbers = []
-        for (bbox, text, confidence) in results:
-            if confidence > 0.5:  # Confidence threshold
-                # Extract numbers only
-                numbers = re.findall(r'\d+', text)
-                for num in numbers:
-                    if 1 <= int(num) <= 99:  # Valid jersey number range
-                        valid_numbers.append(num)
-        
-        if valid_numbers:
-            # Return the most likely number (first one with highest confidence)
-            return valid_numbers[0]
-        else:
-            return "none"
-            
-    except Exception:
-        return "none"
-
-def get_jersey_numbers(frame: np.ndarray, detections: sv.Detections) -> List[str]:
-    """Get jersey numbers for all detected players."""
-    if len(detections) == 0:
-        return []
-    
-    crops = get_crops(frame, detections)
-    numbers = []
-    
-    for crop in crops:
-        number = detect_jersey_number(crop)
-        numbers.append(number)
-    
-    return numbers
 
 # --- Processing Functions ---
 
@@ -130,9 +67,15 @@ def run_player_detection(source_path: str, device: str) -> Iterator[np.ndarray]:
             (detections.class_id == GOALKEEPER_CLASS_ID)
         ]
         
-        # Get jersey numbers
-        jersey_numbers = get_jersey_numbers(frame, valid_detections)
-        labels = [f"#{num}" if num != "none" else "none" for num in jersey_numbers]
+        # Create simple labels based on class
+        labels = []
+        for class_id in valid_detections.class_id:
+            if class_id == PLAYER_CLASS_ID:
+                labels.append("Player")
+            elif class_id == GOALKEEPER_CLASS_ID:
+                labels.append("Goalie")
+            else:
+                labels.append("Unknown")
         
         annotated_frame = frame.copy()
         annotated_frame = ANNOTATOR.annotate(annotated_frame, valid_detections)
@@ -163,9 +106,6 @@ def run_player_tracking(source_path: str, device: str) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
     
-    # Dictionary to store jersey numbers for each tracker ID
-    tracker_jersey_numbers = {}
-    
     for frame in sv.get_video_frames_generator(source_path=source_path):
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
@@ -178,39 +118,21 @@ def run_player_tracking(source_path: str, device: str) -> Iterator[np.ndarray]:
         
         tracked_detections = tracker.update_with_detections(valid_detections)
         
-        # Get jersey numbers for current detections
-        jersey_numbers = get_jersey_numbers(frame, tracked_detections)
-        
-        # Update tracker jersey number mapping
-        for i, tracker_id in enumerate(tracked_detections.tracker_id):
-            if i < len(jersey_numbers) and jersey_numbers[i] != "none":
-                # If we detect a number, update the mapping
-                tracker_jersey_numbers[tracker_id] = jersey_numbers[i]
-            elif tracker_id not in tracker_jersey_numbers:
-                # If no number detected and no previous mapping, set to none
-                tracker_jersey_numbers[tracker_id] = "none"
-        
-        # Create labels using stored jersey numbers
+        # Create labels with tracker ID and class
         labels = []
-        for tracker_id in tracked_detections.tracker_id:
-            jersey_num = tracker_jersey_numbers.get(tracker_id, "none")
-            if jersey_num != "none":
-                labels.append(f"#{jersey_num}")
-            else:
-                labels.append("none")
+        for i, (tracker_id, class_id) in enumerate(zip(tracked_detections.tracker_id, tracked_detections.class_id)):
+            class_name = "Player" if class_id == PLAYER_CLASS_ID else "Goalie"
+            labels.append(f"{class_name} {tracker_id}")
         
         annotated_frame = frame.copy()
         annotated_frame = ANNOTATOR.annotate(annotated_frame, tracked_detections)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, tracked_detections, labels=labels)
         yield annotated_frame
-        
+
 def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
-    
-    # Dictionary to store jersey numbers for each tracker ID
-    tracker_jersey_numbers = {}
     
     # Fit classifier with sample frames
     print("Initializing team classification...")
@@ -291,24 +213,16 @@ def run_team_classification(source_path: str, device: str) -> Iterator[np.ndarra
         else:
             color_lookup = goalie_team_ids.astype(np.int32)
         
-        # Get jersey numbers for all tracked players
-        jersey_numbers = get_jersey_numbers(frame, all_detections)
-        
-        # Update tracker jersey number mapping
-        for i, tracker_id in enumerate(all_detections.tracker_id):
-            if i < len(jersey_numbers) and jersey_numbers[i] != "none":
-                tracker_jersey_numbers[tracker_id] = jersey_numbers[i]
-            elif tracker_id not in tracker_jersey_numbers:
-                tracker_jersey_numbers[tracker_id] = "none"
-        
-        # Create labels using stored jersey numbers
+        # Create labels with team and tracker information
         labels = []
-        for tracker_id in all_detections.tracker_id:
-            jersey_num = tracker_jersey_numbers.get(tracker_id, "none")
-            if jersey_num != "none":
-                labels.append(f"#{jersey_num}")
+        for i, (tracker_id, class_id) in enumerate(zip(all_detections.tracker_id, all_detections.class_id)):
+            if class_id == PLAYER_CLASS_ID and i < len(player_team_ids):
+                team_name = f"Team {player_team_ids[i]}"
+                labels.append(f"{team_name} {tracker_id}")
+            elif class_id == GOALKEEPER_CLASS_ID:
+                labels.append(f"Goalie {tracker_id}")
             else:
-                labels.append("none")
+                labels.append(f"Player {tracker_id}")
         
         annotated_frame = frame.copy()
         
