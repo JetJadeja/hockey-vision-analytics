@@ -131,6 +131,7 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
     print("Classifier fitted.")
 
     # Process video and apply team colors
+    # IMPORTANT: Create a fresh generator to process all frames from the beginning
     for frame in sv.get_video_frames_generator(source_path=source_path):
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
@@ -242,50 +243,123 @@ def main(source_path: str, target_path: str, device: str, rink_keypoints: bool, 
         # Get original video info
         video_info = sv.VideoInfo.from_video_path(source_path)
         
-        # If using 2D map, we need to peek at first frame to get actual dimensions
+        # If 2D map is enabled, we need to skip frames until the map is ready
         if show_2d_map:
-            # Convert generator to list to peek at first frame
-            frames_list = []
-            first_frame = None
+            print("2D map enabled - skipping initial frames until map is ready...")
+            frame_iterator = iter(frame_generator)
             
-            # Process frames
-            for frame in tqdm(frame_generator, total=video_info.total_frames):
-                if first_frame is None:
-                    first_frame = frame
-                    # Update video info with new dimensions
-                    new_height, new_width = frame.shape[:2]
-                    video_info.width = new_width
-                    video_info.height = new_height
-                    # Create video sink with updated dimensions
-                    sink = sv.VideoSink(target_path, video_info)
-                    sink.__enter__()
-                
-                try:
-                    sink.write_frame(frame)
-                except Exception as e:
-                    print(f"Error writing frame: {e}")
-                    
+            # Skip frames until we get one with the proper combined view dimensions
+            first_combined_frame = None
+            skipped_frames = 0
+            
+            for frame in frame_iterator:
                 cv2.imshow("Hockey Vision", frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+                cv2.waitKey(1)
+                
+                # Check if this frame has the combined view dimensions (taller than original)
+                if frame.shape[0] > video_info.height * 1.5:  # Combined view should be significantly taller
+                    first_combined_frame = frame
+                    print(f"Map view ready after skipping {skipped_frames} frames")
+                    break
+                    
+                skipped_frames += 1
+                if skipped_frames > 100:  # Safety limit
+                    print("Warning: Map view not detected after 100 frames")
+                    first_combined_frame = frame
                     break
             
-            # Close the sink
-            if first_frame is not None:
-                sink.__exit__(None, None, None)
-        else:
-            # Normal processing without 2D map
+            if first_combined_frame is None:
+                print("Error: No frames with map view generated")
+                cv2.destroyAllWindows()
+                return
+                
+            # Update video info with actual output dimensions
+            output_height, output_width = first_combined_frame.shape[:2]
+            video_info.width = output_width
+            video_info.height = output_height
+            
+            print(f"Output video dimensions: {output_width}x{output_height}")
+            print(f"Original dimensions were: {video_info.width}x{video_info.height}")
+            
+            # Adjust total frames for progress bar
+            video_info.total_frames = max(1, video_info.total_frames - skipped_frames)
+            
+            # Create video sink with correct dimensions
             with sv.VideoSink(target_path, video_info) as sink:
-                for frame in tqdm(frame_generator, total=video_info.total_frames):
-                    sink.write_frame(frame)
-                    cv2.imshow("Hockey Vision", frame)
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
-                        break
+                # Write first combined frame
+                sink.write_frame(first_combined_frame)
+                
+                # Process remaining frames
+                frame_count = 1
+                try:
+                    for frame in tqdm(frame_iterator, total=video_info.total_frames-1, initial=1):
+                        sink.write_frame(frame)
+                        cv2.imshow("Hockey Vision", frame)
+                        frame_count += 1
+                        
+                        if cv2.waitKey(1) & 0xFF == ord("q"):
+                            print(f"\nStopped by user. Processed {frame_count} frames")
+                            break
+                except Exception as e:
+                    print(f"\nError processing frame {frame_count}: {e}")
+                    import traceback
+                    traceback.print_exc()
+        else:
+            # Original logic for non-2D map mode
+            frame_iterator = iter(frame_generator)
+            try:
+                first_frame = next(frame_iterator)
+            except StopIteration:
+                print("Error: No frames generated")
+                cv2.destroyAllWindows()
+                return
+            
+            # Update video info with actual output dimensions
+            output_height, output_width = first_frame.shape[:2]
+            video_info.width = output_width
+            video_info.height = output_height
+            
+            print(f"Output video dimensions: {output_width}x{output_height}")
+            
+            # Create video sink with correct dimensions
+            with sv.VideoSink(target_path, video_info) as sink:
+                # Write first frame
+                sink.write_frame(first_frame)
+                cv2.imshow("Hockey Vision", first_frame)
+                
+                # Process remaining frames
+                frame_count = 1
+                try:
+                    for frame in tqdm(frame_iterator, total=video_info.total_frames-1, initial=1):
+                        sink.write_frame(frame)
+                        cv2.imshow("Hockey Vision", frame)
+                        frame_count += 1
+                        
+                        if cv2.waitKey(1) & 0xFF == ord("q"):
+                            print(f"\nStopped by user. Processed {frame_count} frames")
+                            break
+                except Exception as e:
+                    print(f"\nError processing frame {frame_count}: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
+        print(f"\nVideo saved: {target_path}")
+        print(f"Total frames written: {frame_count}")
+        
     else:
         # If no target path, just display
-        for frame in frame_generator:
-            cv2.imshow("Hockey Vision", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+        frame_count = 0
+        try:
+            for frame in frame_generator:
+                cv2.imshow("Hockey Vision", frame)
+                frame_count += 1
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    print(f"\nStopped by user. Processed {frame_count} frames")
+                    break
+        except Exception as e:
+            print(f"\nError processing frame {frame_count}: {e}")
+            import traceback
+            traceback.print_exc()
     
     cv2.destroyAllWindows()
 
