@@ -48,11 +48,14 @@ class DetectionStabilizer:
         smoothed_bbox = (self.smoothing_factor * current_bbox + 
                         (1 - self.smoothing_factor) * previous_bbox)
         
-        # Update history with smoothed values
+        # Update history with smoothed values (keep as floats for accuracy)
         self.history[tracker_id] = smoothed_bbox
         
-        # Return as tuple of floats
-        return tuple(smoothed_bbox)
+        # Round to nearest pixel for stable rendering
+        rounded_bbox = np.round(smoothed_bbox).astype(int)
+        
+        # Return as tuple of integers
+        return tuple(rounded_bbox)
     
     def cleanup_old_trackers(self, active_tracker_ids: set):
         """
