@@ -14,6 +14,7 @@ from common.puck import PuckTracker, PuckAnnotator
 from common.team import TeamClassifier
 from common.smooth_annotator import SmoothAnnotator
 from common.team_selector import InteractiveTeamSelector
+from common.styled_label_annotator import StyledLabelAnnotator
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
@@ -39,10 +40,13 @@ BASE_ANNOTATOR = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(COLORS), thi
 
 # Wrap with smooth annotators for stable visualization
 ANNOTATOR = SmoothAnnotator(BASE_ANNOTATOR, smoothing_factor=0.3)
+# Use supervision's label annotator with matching colors
 LABEL_ANNOTATOR = sv.LabelAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
-    text_color=sv.Color.from_hex('#000000'),
-    text_padding=2
+    text_color=sv.Color.from_hex('#FFFFFF'),
+    text_padding=4,
+    text_scale=0.5,
+    text_thickness=1
 )
 
 class Mode(Enum):

@@ -238,6 +238,6 @@ class InteractiveTeamSelector:
             elif key == 8:  # BACKSPACE
                 team_name = team_name[:-1]
             elif 32 <= key <= 126:  # Printable characters
-                team_name += chr(key).upper()
+                team_name += chr(key)  # Keep original case
                 if len(team_name) > 10:  # Limit length
                     team_name = team_name[:10]
