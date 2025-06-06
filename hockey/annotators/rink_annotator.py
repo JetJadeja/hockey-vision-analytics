@@ -300,6 +300,18 @@ class RinkMapVisualizer:
         """
         self.current_view_info = self.camera_detector.classify_view(keypoints, frame_shape)
         self.adaptive_mapper.update_view(self.current_view_info)
+        
+        # Calculate homography from keypoints if available
+        if keypoints and len(keypoints) >= 4:
+            # Only recalculate if we don't have a homography yet
+            if self.homography is None:
+                # Create a temporary detector to calculate homography
+                from common.rink_keypoint_detector import RinkKeypointDetector
+                detector = RinkKeypointDetector(None)  # Don't need model for homography calc
+                homography = detector.get_rink_homography(keypoints)
+                if homography is not None:
+                    self.set_homography(homography)
+                    print(f"Homography matrix set successfully")
     
     def transform_point(self, point: Tuple[float, float], video_shape: Tuple[int, int]) -> Tuple[int, int]:
         """
@@ -317,9 +329,14 @@ class RinkMapVisualizer:
             pt = np.array([[point[0], point[1]]], dtype=np.float32)
             transformed = cv2.perspectiveTransform(pt.reshape(1, 1, 2), self.homography)
             map_x, map_y = transformed[0, 0]
+            
+            # Clamp to valid rink bounds for safety
+            map_x = max(0, min(map_x, self.rink_length + 2 * self.padding))
+            map_y = max(0, min(map_y, self.rink_width + 2 * self.padding))
+            
             return int(map_x), int(map_y)
         else:
-            # Use adaptive mapper based on camera view
+            # Fallback: Use adaptive mapper based on camera view
             rink_dimensions = (self.rink_length, self.rink_width)
             return self.adaptive_mapper.transform_point(
                 point, video_shape, rink_dimensions, self.padding
