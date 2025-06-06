@@ -10,16 +10,23 @@ class SmoothAnnotator:
     only for visualization purposes, without affecting the underlying detections.
     """
     
-    def __init__(self, annotator: Union[sv.BoxAnnotator, sv.EllipseAnnotator], smoothing_factor: float = 0.3):
+    def __init__(self, annotator: Union[sv.BoxAnnotator, sv.EllipseAnnotator], 
+                 smoothing_factor: float = 0.3, use_kalman: bool = True):
         """
         Initialize the smooth annotator wrapper.
         
         Args:
             annotator: The base supervision annotator to wrap
             smoothing_factor: How much to smooth (0=no smoothing, 1=full smoothing)
+            use_kalman: Whether to use Kalman filtering (more advanced smoothing)
         """
         self.annotator = annotator
-        self.stabilizer = DetectionStabilizer(smoothing_factor=smoothing_factor)
+        self.stabilizer = DetectionStabilizer(
+            smoothing_factor=smoothing_factor,
+            use_kalman=use_kalman,
+            velocity_threshold=15.0,  # Adjusted for hockey's fast pace
+            size_stability_factor=0.4  # More size stability
+        )
     
     def annotate(
         self,
@@ -59,7 +66,9 @@ class SmoothAnnotator:
         
         # Apply smoothing to each detection individually
         for i, (tracker_id, bbox) in enumerate(zip(detections.tracker_id, detections.xyxy)):
-            smoothed_bbox = self.stabilizer.update(tracker_id, tuple(bbox))
+            # Get confidence if available
+            confidence = detections.confidence[i] if detections.confidence is not None else 1.0
+            smoothed_bbox = self.stabilizer.update(tracker_id, tuple(bbox), confidence)
             smoothed_detections.xyxy[i] = np.array(smoothed_bbox)
         
         # Clean up old trackers

@@ -40,8 +40,8 @@ COLORS = ['#FF1493', '#00BFFF', '#FF6347'] # Team1, Team2, Goalies
 BASE_ANNOTATOR = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
 
 # Wrap with smooth annotators for stable visualization
-# Higher smoothing factor = more stability, less responsiveness
-ANNOTATOR = SmoothAnnotator(BASE_ANNOTATOR, smoothing_factor=0.5)
+# Using Kalman filtering with optimized settings for hockey
+ANNOTATOR = SmoothAnnotator(BASE_ANNOTATOR, smoothing_factor=0.25, use_kalman=True)
 # Use supervision's label annotator with matching colors
 LABEL_ANNOTATOR = sv.LabelAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
@@ -59,7 +59,15 @@ def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
 def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = False) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
-    tracker = sv.ByteTrack(minimum_consecutive_frames=5)
+    
+    # Optimized ByteTrack configuration for hockey
+    tracker = sv.ByteTrack(
+        track_activation_threshold=0.25,      # Lower threshold to catch fast-moving players
+        lost_track_buffer=30,                 # Keep tracks for 1 second (30 frames @ 30fps)
+        minimum_matching_threshold=0.8,       # Higher threshold for better consistency
+        frame_rate=30,                        # Standard hockey broadcast framerate
+        minimum_consecutive_frames=2          # Faster track initialization
+    )
     team_selector = InteractiveTeamSelector()
     
     # Initialize rink keypoint detector if enabled
@@ -78,7 +86,11 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
     
     # Find a good frame for interactive selection
     frame_generator = sv.get_video_frames_generator(source_path=source_path, stride=10)
-    temp_tracker = sv.ByteTrack(minimum_consecutive_frames=1)
+    temp_tracker = sv.ByteTrack(
+        track_activation_threshold=0.25,
+        minimum_consecutive_frames=1,
+        frame_rate=30
+    )
     
     for i, frame in enumerate(frame_generator):
         if i > 20:  # Just sample first 20 frames for fitting
@@ -123,13 +135,14 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
 
     # Process video and apply team colors
     for frame in sv.get_video_frames_generator(source_path=source_path):
-        result = player_model(frame, imgsz=1280, verbose=False)[0]
+        result = player_model(frame, imgsz=1280, verbose=False, conf=0.4)[0]  # Confidence threshold
         detections = sv.Detections.from_ultralytics(result)
         
-        # Filter for valid classes only
+        # Filter for valid classes and confidence
         valid_detections = detections[
-            (detections.class_id == PLAYER_CLASS_ID) | 
-            (detections.class_id == GOALKEEPER_CLASS_ID)
+            ((detections.class_id == PLAYER_CLASS_ID) | 
+             (detections.class_id == GOALKEEPER_CLASS_ID)) &
+            (detections.confidence > 0.4)  # Additional confidence filter
         ]
         
         tracked_detections = tracker.update_with_detections(valid_detections)
