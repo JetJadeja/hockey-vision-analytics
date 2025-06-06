@@ -21,7 +21,7 @@ from configs.hockey import HockeyRinkConfiguration
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(PARENT_DIR, 'data')
+DATA_DIR = os.path.join(PARENT_DIR, 'models')
 PLAYER_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-player-detection.pt')
 PUCK_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-puck-detection.pt')
 HOCKEY_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-detection.pt')

@@ -3,7 +3,7 @@
 notebooks/models/
 notebooks/datasets/
 
-hockey/data/
+hockey/models/
 
 **/.env
 
@@ -12,3 +12,5 @@ hockey/data/
 **/output.mp4
 **/output1.mp4
 **/output2.mp4
+
+temp/

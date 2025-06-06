@@ -1,0 +1,495 @@
+{
+  "keypoints": {
+    "0": {
+      "rink_position": [
+        0.8333333333333334,
+        28.177083333333332
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "1": {
+      "rink_position": [
+        1.1979166666666667,
+        56.25
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "2": {
+      "rink_position": [
+        11.40625,
+        5.9375
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "3": {
+      "rink_position": [
+        10.677083333333334,
+        27.8125
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "4": {
+      "rink_position": [
+        11.770833333333334,
+        36.927083333333336
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "5": {
+      "rink_position": [
+        11.041666666666666,
+        48.229166666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "6": {
+      "rink_position": [
+        11.041666666666666,
+        57.34375
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "8": {
+      "rink_position": [
+        15.052083333333334,
+        36.927083333333336
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "9": {
+      "rink_position": [
+        15.052083333333334,
+        47.864583333333336
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "10": {
+      "rink_position": [
+        26.354166666666668,
+        7.760416666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "11": {
+      "rink_position": [
+        25.989583333333332,
+        36.197916666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "12": {
+      "rink_position": [
+        25.260416666666668,
+        48.958333333333336
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "13": {
+      "rink_position": [
+        25.989583333333332,
+        77.03125
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "14": {
+      "rink_position": [
+        31.458333333333332,
+        21.979166666666668
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "15": {
+      "rink_position": [
+        31.458333333333332,
+        63.177083333333336
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "16": {
+      "rink_position": [
+        35.46875,
+        7.395833333333333
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "17": {
+      "rink_position": [
+        35.46875,
+        36.5625
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "18": {
+      "rink_position": [
+        34.739583333333336,
+        48.229166666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "19": {
+      "rink_position": [
+        35.104166666666664,
+        77.39583333333333
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "20": {
+      "rink_position": [
+        75.20833333333333,
+        0.10416666666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "21": {
+      "rink_position": [
+        75.20833333333333,
+        84.6875
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "22": {
+      "rink_position": [
+        80.3125,
+        8.489583333333334
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "23": {
+      "rink_position": [
+        80.3125,
+        68.64583333333333
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "24": {
+      "rink_position": [
+        100.36458333333333,
+        0.8333333333333334
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "25": {
+      "rink_position": [
+        100.36458333333333,
+        27.447916666666668
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "26": {
+      "rink_position": [
+        100.36458333333333,
+        42.395833333333336
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "27": {
+      "rink_position": [
+        100.36458333333333,
+        56.979166666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "28": {
+      "rink_position": [
+        95.26041666666667,
+        84.32291666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "29": {
+      "rink_position": [
+        100.0,
+        80.67708333333333
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "30": {
+      "rink_position": [
+        100.36458333333333,
+        85
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "31": {
+      "rink_position": [
+        105.46875,
+        84.32291666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "32": {
+      "rink_position": [
+        120.05208333333333,
+        8.125
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "33": {
+      "rink_position": [
+        120.41666666666667,
+        69.375
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "34": {
+      "rink_position": [
+        125.15625,
+        0.10416666666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "35": {
+      "rink_position": [
+        125.15625,
+        84.32291666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "36": {
+      "rink_position": [
+        165.26041666666666,
+        7.760416666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "37": {
+      "rink_position": [
+        165.98958333333334,
+        36.197916666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "38": {
+      "rink_position": [
+        164.53125,
+        47.135416666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "39": {
+      "rink_position": [
+        166.35416666666666,
+        78.125
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "40": {
+      "rink_position": [
+        168.90625,
+        21.25
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "41": {
+      "rink_position": [
+        168.90625,
+        62.8125
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "42": {
+      "rink_position": [
+        173.28125,
+        7.760416666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "43": {
+      "rink_position": [
+        173.64583333333334,
+        36.197916666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "44": {
+      "rink_position": [
+        173.64583333333334,
+        47.135416666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "45": {
+      "rink_position": [
+        172.1875,
+        77.76041666666667
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "46": {
+      "rink_position": [
+        183.125,
+        36.5625
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "47": {
+      "rink_position": [
+        184.21875,
+        48.229166666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "48": {
+      "rink_position": [
+        189.32291666666666,
+        7.03125
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "49": {
+      "rink_position": [
+        189.32291666666666,
+        27.447916666666668
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "50": {
+      "rink_position": [
+        188.95833333333334,
+        36.5625
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "51": {
+      "rink_position": [
+        188.95833333333334,
+        48.59375
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "52": {
+      "rink_position": [
+        188.95833333333334,
+        57.34375
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "54": {
+      "rink_position": [
+        199.53125,
+        27.8125
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    },
+    "55": {
+      "rink_position": [
+        199.53125,
+        56.979166666666664
+      ],
+      "name": null,
+      "confidence": 1.0,
+      "mapping_method": "manual"
+    }
+  },
+  "mapping_metadata": {
+    "dataset_version": "SimulaMet-HOST/HockeyRink",
+    "total_keypoints": 56,
+    "mapped_keypoints": 54
+  }
+}
