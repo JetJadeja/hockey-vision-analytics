@@ -56,7 +56,7 @@ def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
 
 # --- Main Processing Function ---
 
-def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = False, show_2d_map: bool = False) -> Iterator[np.ndarray]:
+def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = False, show_2d_map: bool = False, debug_keypoints: bool = False) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
@@ -230,15 +230,17 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
             annotated_frame = rink_map_visualizer.create_combined_view(
                 video_frame=annotated_frame,
                 player_positions=player_positions,
-                team_assignments=color_lookup
+                team_assignments=color_lookup,
+                show_keypoints=debug_keypoints,
+                keypoints=keypoints if debug_keypoints else None
             )
         
         yield annotated_frame
 
 # --- Main Function ---
 
-def main(source_path: str, target_path: str, device: str, rink_keypoints: bool, show_2d_map: bool):
-    frame_generator = process_hockey_video(source_path, device, rink_keypoints, show_2d_map)
+def main(source_path: str, target_path: str, device: str, rink_keypoints: bool, show_2d_map: bool, debug_keypoints: bool):
+    frame_generator = process_hockey_video(source_path, device, rink_keypoints, show_2d_map, debug_keypoints)
 
     if target_path:
         # Get original video info
@@ -372,6 +374,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cpu', help="Device to run models on ('cpu', 'cuda', 'mps').")
     parser.add_argument('--rink-keypoints', action='store_true', help='Enable rink keypoint detection for ice surface elements.')
     parser.add_argument('--show-2d-map', action='store_true', help='Show 2D rink map with player positions below video.')
+    parser.add_argument('--debug-keypoints', action='store_true', help='Show keypoint mappings on 2D map instead of players (requires --show-2d-map).')
     
     args = parser.parse_args()
     main(
@@ -379,5 +382,6 @@ if __name__ == '__main__':
         target_path=args.target_path,
         device=args.device,
         rink_keypoints=args.rink_keypoints,
-        show_2d_map=args.show_2d_map
+        show_2d_map=args.show_2d_map,
+        debug_keypoints=args.debug_keypoints
     )

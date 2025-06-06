@@ -382,12 +382,92 @@ class RinkMapVisualizer:
         
         return rink_map
     
+    def draw_keypoints_on_map(self, keypoints: Optional[List[RinkKeypoint]] = None) -> np.ndarray:
+        """
+        Draw all keypoint mappings from keypoints.json on the rink map for debugging.
+        
+        Args:
+            keypoints: Optional list of detected keypoints to highlight
+            
+        Returns:
+            Rink map with keypoints visualized
+        """
+        import json
+        import os
+        
+        # Create a copy of the base rink
+        rink_map = self.base_rink.copy()
+        
+        # Load keypoint mappings
+        keypoints_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'hockey', 'data', 'keypoints.json')
+        if not os.path.exists(keypoints_file):
+            print(f"keypoints.json not found at {keypoints_file}")
+            return rink_map
+            
+        try:
+            with open(keypoints_file, 'r') as f:
+                keypoint_data = json.load(f)
+                mapped_keypoints = keypoint_data.get('keypoints', {})
+        except Exception as e:
+            print(f"Error loading keypoints.json: {e}")
+            return rink_map
+        
+        # Draw all mapped keypoints
+        for kp_id, mapping in mapped_keypoints.items():
+            if mapping.get('rink_position'):
+                rink_x_ft, rink_y_ft = mapping['rink_position']
+                
+                # Convert feet to pixels (using same scale as homography calculation)
+                map_x = int(rink_x_ft * self.scale + self.padding)
+                map_y = int(rink_y_ft * self.scale + self.padding)
+                
+                # Determine color based on zone
+                kp_id_int = int(kp_id)
+                if 0 <= kp_id_int <= 19:  # Left zone
+                    color = (0, 255, 0)  # Green
+                elif 20 <= kp_id_int <= 35:  # Center zone
+                    color = (255, 0, 0)  # Blue
+                else:  # Right zone (36-55)
+                    color = (0, 0, 255)  # Red
+                
+                # Draw keypoint
+                cv2.circle(rink_map, (map_x, map_y), 4, color, -1)
+                cv2.circle(rink_map, (map_x, map_y), 4, (0, 0, 0), 1)
+                
+                # Add keypoint ID
+                cv2.putText(rink_map, str(kp_id), (map_x + 6, map_y - 6),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+        
+        # If detected keypoints provided, highlight those that have mappings
+        if keypoints:
+            detected_count = 0
+            for kp in keypoints:
+                if kp.confidence > 0.5:
+                    kp_id_str = str(kp.id)
+                    if kp_id_str in mapped_keypoints and mapped_keypoints[kp_id_str].get('rink_position'):
+                        detected_count += 1
+                        rink_x_ft, rink_y_ft = mapped_keypoints[kp_id_str]['rink_position']
+                        map_x = int(rink_x_ft * self.scale + self.padding)
+                        map_y = int(rink_y_ft * self.scale + self.padding)
+                        
+                        # Draw larger circle for detected keypoints
+                        cv2.circle(rink_map, (map_x, map_y), 8, (255, 255, 0), 2)  # Yellow outline
+            
+            # Add text showing detection info
+            cv2.putText(rink_map, f"Detected: {detected_count}/{len(mapped_keypoints)} keypoints",
+                       (self.padding + 10, self.padding + 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        
+        return rink_map
+    
     def create_combined_view(
         self,
         video_frame: np.ndarray,
         player_positions: List[Tuple[float, float]],
         team_assignments: np.ndarray,
-        gap: int = 20
+        gap: int = 20,
+        show_keypoints: bool = False,
+        keypoints: Optional[List[RinkKeypoint]] = None
     ) -> np.ndarray:
         """
         Create a combined view with video on top and rink map below.
@@ -397,16 +477,21 @@ class RinkMapVisualizer:
             player_positions: List of player positions
             team_assignments: Array of team IDs
             gap: Gap between video and map
+            show_keypoints: If True, show keypoint mapping visualization instead of players
+            keypoints: List of detected keypoints (used when show_keypoints=True)
             
         Returns:
             Combined frame
         """
-        # Get rink map with players
-        rink_map = self.draw_players(
-            frame_shape=(video_frame.shape[0], video_frame.shape[1]),
-            player_positions=player_positions,
-            team_assignments=team_assignments
-        )
+        # Get rink map with either players or keypoints
+        if show_keypoints:
+            rink_map = self.draw_keypoints_on_map(keypoints)
+        else:
+            rink_map = self.draw_players(
+                frame_shape=(video_frame.shape[0], video_frame.shape[1]),
+                player_positions=player_positions,
+                team_assignments=team_assignments
+            )
         
         # Resize rink map to match video width
         video_height, video_width = video_frame.shape[:2]
