@@ -9,17 +9,17 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 # Import your hockey-specific modules
+from common.puck import PuckTracker, PuckAnnotator
 from common.team import TeamClassifier
 from common.smooth_annotator import SmoothAnnotator
 from common.team_selector import InteractiveTeamSelector
+from common.styled_label_annotator import StyledLabelAnnotator
 from common.rink_keypoint_detector import RinkKeypointDetector
-from annotators.rink_annotator import RinkMapVisualizer
-from configs.hockey import HockeyRinkConfiguration, RINK_SCALE_FACTOR, RINK_PADDING
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(PARENT_DIR, 'models')
+DATA_DIR = os.path.join(PARENT_DIR, 'data')
 PLAYER_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-player-detection.pt')
 PUCK_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-puck-detection.pt')
 HOCKEY_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-detection.pt')
@@ -56,7 +56,7 @@ def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
 
 # --- Main Processing Function ---
 
-def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = False, show_2d_map: bool = False, debug_keypoints: bool = False) -> Iterator[np.ndarray]:
+def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = False) -> Iterator[np.ndarray]:
     player_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     team_classifier = TeamClassifier(device=device)
     tracker = sv.ByteTrack(minimum_consecutive_frames=5)
@@ -67,16 +67,6 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
     if rink_keypoints:
         rink_detector = RinkKeypointDetector(HOCKEY_DETECTION_MODEL_PATH)
         print("Rink keypoint detection enabled")
-    
-    # Initialize rink map visualizer if enabled
-    rink_map_visualizer = None
-    if show_2d_map:
-        # Initialize rink configuration
-        rink_config = HockeyRinkConfiguration()
-        
-        # Create 2D map visualizer with global constants
-        rink_map_visualizer = RinkMapVisualizer(rink_config, scale=RINK_SCALE_FACTOR, padding=RINK_PADDING)
-        print("2D rink map visualization enabled")
     
     # Fit classifier with sample frames
     print("Initializing team classification...")
@@ -132,7 +122,6 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
     print("Classifier fitted.")
 
     # Process video and apply team colors
-    # IMPORTANT: Create a fresh generator to process all frames from the beginning
     for frame in sv.get_video_frames_generator(source_path=source_path):
         result = player_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
@@ -194,175 +183,37 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
         annotated_frame = ANNOTATOR.annotate(annotated_frame, all_detections, custom_color_lookup=color_lookup)
         annotated_frame = LABEL_ANNOTATOR.annotate(annotated_frame, all_detections, labels, custom_color_lookup=color_lookup)
         
-        # Detect keypoints once if either feature is enabled
-        keypoints = None
-        if rink_detector is not None or rink_map_visualizer is not None:
-            if rink_detector is not None:
-                keypoints = rink_detector.detect_keypoints(annotated_frame, conf_threshold=0.3)
-            else:
-                # Use a temporary detector just for keypoints
-                temp_detector = RinkKeypointDetector(HOCKEY_DETECTION_MODEL_PATH)
-                keypoints = temp_detector.detect_keypoints(annotated_frame, conf_threshold=0.3)
-        
-        # Apply rink keypoint visualization if enabled
-        if rink_detector is not None and keypoints:
-            annotated_frame = rink_detector.visualize_keypoints(
-                annotated_frame, 
-                keypoints,
-                radius=10,
-                show_labels=True
-            )
-        
-        # Apply 2D rink map visualization if enabled
-        if rink_map_visualizer is not None and len(all_detections) > 0:
-            # Update camera view based on keypoints
+        # Apply rink keypoint detection if enabled
+        if rink_detector is not None:
+            keypoints = rink_detector.detect_keypoints(annotated_frame, conf_threshold=0.3)
             if keypoints:
-                rink_map_visualizer.update_camera_view(keypoints, annotated_frame.shape[:2])
-            
-            # Extract player positions (center of bounding boxes)
-            player_positions = []
-            for xyxy in all_detections.xyxy:
-                center_x = (xyxy[0] + xyxy[2]) / 2
-                center_y = (xyxy[1] + xyxy[3]) / 2
-                player_positions.append((center_x, center_y))
-            
-            # Create combined view with video and 2D map
-            annotated_frame = rink_map_visualizer.create_combined_view(
-                video_frame=annotated_frame,
-                player_positions=player_positions,
-                team_assignments=color_lookup,
-                show_keypoints=debug_keypoints,
-                keypoints=keypoints if debug_keypoints else None
-            )
+                annotated_frame = rink_detector.visualize_keypoints(
+                    annotated_frame, 
+                    keypoints,
+                    radius=10,
+                    show_labels=True
+                )
         
         yield annotated_frame
 
 # --- Main Function ---
 
-def main(source_path: str, target_path: str, device: str, rink_keypoints: bool, show_2d_map: bool, debug_keypoints: bool):
-    frame_generator = process_hockey_video(source_path, device, rink_keypoints, show_2d_map, debug_keypoints)
+def main(source_path: str, target_path: str, device: str, rink_keypoints: bool):
+    frame_generator = process_hockey_video(source_path, device, rink_keypoints)
 
     if target_path:
-        # Get original video info
         video_info = sv.VideoInfo.from_video_path(source_path)
-        
-        # If 2D map is enabled, we need to skip frames until the map is ready
-        if show_2d_map:
-            print("2D map enabled - skipping initial frames until map is ready...")
-            frame_iterator = iter(frame_generator)
-            
-            # Skip frames until we get one with the proper combined view dimensions
-            first_combined_frame = None
-            skipped_frames = 0
-            
-            for frame in frame_iterator:
+        with sv.VideoSink(target_path, video_info) as sink:
+            for frame in tqdm(frame_generator, total=video_info.total_frames):
+                sink.write_frame(frame)
                 cv2.imshow("Hockey Vision", frame)
-                cv2.waitKey(1)
-                
-                # Check if this frame has the combined view dimensions (taller than original)
-                if frame.shape[0] > video_info.height * 1.5:  # Combined view should be significantly taller
-                    first_combined_frame = frame
-                    print(f"Map view ready after skipping {skipped_frames} frames")
-                    break
-                    
-                skipped_frames += 1
-                if skipped_frames > 100:  # Safety limit
-                    print("Warning: Map view not detected after 100 frames")
-                    first_combined_frame = frame
-                    break
-            
-            if first_combined_frame is None:
-                print("Error: No frames with map view generated")
-                cv2.destroyAllWindows()
-                return
-                
-            # Update video info with actual output dimensions
-            output_height, output_width = first_combined_frame.shape[:2]
-            video_info.width = output_width
-            video_info.height = output_height
-            
-            print(f"Output video dimensions: {output_width}x{output_height}")
-            print(f"Original dimensions were: {video_info.width}x{video_info.height}")
-            
-            # Adjust total frames for progress bar
-            video_info.total_frames = max(1, video_info.total_frames - skipped_frames)
-            
-            # Create video sink with correct dimensions
-            with sv.VideoSink(target_path, video_info) as sink:
-                # Write first combined frame
-                sink.write_frame(first_combined_frame)
-                
-                # Process remaining frames
-                frame_count = 1
-                try:
-                    for frame in tqdm(frame_iterator, total=video_info.total_frames-1, initial=1):
-                        sink.write_frame(frame)
-                        cv2.imshow("Hockey Vision", frame)
-                        frame_count += 1
-                        
-                        if cv2.waitKey(1) & 0xFF == ord("q"):
-                            print(f"\nStopped by user. Processed {frame_count} frames")
-                            break
-                except Exception as e:
-                    print(f"\nError processing frame {frame_count}: {e}")
-                    import traceback
-                    traceback.print_exc()
-        else:
-            # Original logic for non-2D map mode
-            frame_iterator = iter(frame_generator)
-            try:
-                first_frame = next(frame_iterator)
-            except StopIteration:
-                print("Error: No frames generated")
-                cv2.destroyAllWindows()
-                return
-            
-            # Update video info with actual output dimensions
-            output_height, output_width = first_frame.shape[:2]
-            video_info.width = output_width
-            video_info.height = output_height
-            
-            print(f"Output video dimensions: {output_width}x{output_height}")
-            
-            # Create video sink with correct dimensions
-            with sv.VideoSink(target_path, video_info) as sink:
-                # Write first frame
-                sink.write_frame(first_frame)
-                cv2.imshow("Hockey Vision", first_frame)
-                
-                # Process remaining frames
-                frame_count = 1
-                try:
-                    for frame in tqdm(frame_iterator, total=video_info.total_frames-1, initial=1):
-                        sink.write_frame(frame)
-                        cv2.imshow("Hockey Vision", frame)
-                        frame_count += 1
-                        
-                        if cv2.waitKey(1) & 0xFF == ord("q"):
-                            print(f"\nStopped by user. Processed {frame_count} frames")
-                            break
-                except Exception as e:
-                    print(f"\nError processing frame {frame_count}: {e}")
-                    import traceback
-                    traceback.print_exc()
-        
-        print(f"\nVideo saved: {target_path}")
-        print(f"Total frames written: {frame_count}")
-        
-    else:
-        # If no target path, just display
-        frame_count = 0
-        try:
-            for frame in frame_generator:
-                cv2.imshow("Hockey Vision", frame)
-                frame_count += 1
                 if cv2.waitKey(1) & 0xFF == ord("q"):
-                    print(f"\nStopped by user. Processed {frame_count} frames")
                     break
-        except Exception as e:
-            print(f"\nError processing frame {frame_count}: {e}")
-            import traceback
-            traceback.print_exc()
+    else: # If no target path, just display
+        for frame in frame_generator:
+            cv2.imshow("Hockey Vision", frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
     
     cv2.destroyAllWindows()
 
@@ -373,15 +224,11 @@ if __name__ == '__main__':
     parser.add_argument('--target_path', type=str, default=None, help='Path to save the output video.')
     parser.add_argument('--device', type=str, default='cpu', help="Device to run models on ('cpu', 'cuda', 'mps').")
     parser.add_argument('--rink-keypoints', action='store_true', help='Enable rink keypoint detection for ice surface elements.')
-    parser.add_argument('--show-2d-map', action='store_true', help='Show 2D rink map with player positions below video.')
-    parser.add_argument('--debug-keypoints', action='store_true', help='Show keypoint mappings on 2D map instead of players (requires --show-2d-map).')
     
     args = parser.parse_args()
     main(
         source_path=args.source_path,
         target_path=args.target_path,
         device=args.device,
-        rink_keypoints=args.rink_keypoints,
-        show_2d_map=args.show_2d_map,
-        debug_keypoints=args.debug_keypoints
+        rink_keypoints=args.rink_keypoints
     )

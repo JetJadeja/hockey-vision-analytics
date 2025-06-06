@@ -1,521 +1,177 @@
 import cv2
 import supervision as sv
 import numpy as np
-from typing import List, Tuple, Optional, Dict
 
-from configs.hockey import HockeyRinkConfiguration, RINK_SCALE_FACTOR, RINK_PADDING
-from common.camera_view_detector import CameraViewDetector, ViewInfo
-from common.view_mappers import AdaptiveMapper
-from common.rink_keypoint_detector import RinkKeypoint
+from hockey.configs.hockey import HockeyRinkConfiguration
 
 def draw_rink(
     config: HockeyRinkConfiguration,
     background_color: sv.Color = sv.Color.WHITE,
     line_color: sv.Color = sv.Color.BLUE,
-    padding: int = RINK_PADDING,
+    padding: int = 50,
     line_thickness: int = 4,
-    scale: float = RINK_SCALE_FACTOR
+    scale: float = 2.0
 ) -> np.ndarray:
     """
-    Draws a professional NHL-standard hockey rink with proper proportions and realistic appearance.
+    Draws a hockey rink with specified dimensions and colors.
     """
-    # NHL dimensions: 200' x 85' - maintain proper aspect ratio
-    rink_length = 200  # feet
-    rink_width = 85    # feet
+    scaled_width = int(config.width * scale)
+    scaled_length = int(config.length * scale)
+
+    rink_image = np.full(
+        (scaled_width + 2 * padding, scaled_length + 2 * padding, 3),
+        background_color.as_bgr(),
+        dtype=np.uint8
+    )
+
+    # Define colors
+    blue_color = sv.Color.BLUE.as_bgr()
+    red_color = sv.Color.RED.as_bgr()
     
-    # Scale for proper proportions
-    scaled_length = int(rink_length * scale)
-    scaled_width = int(rink_width * scale)
-    
-    # Create canvas
-    canvas_width = scaled_length + 2 * padding
-    canvas_height = scaled_width + 2 * padding
-    
-    # Professional ice color - clean white with very subtle blue tint
-    ice_color = (255, 255, 255)
-    rink_image = np.full((canvas_height, canvas_width, 3), ice_color, dtype=np.uint8)
-    
-    # Professional hockey colors
-    board_color = (50, 50, 50)        # Dark gray boards
-    red_line_color = (0, 0, 255)      # Bright red (BGR format)
-    blue_line_color = (255, 0, 0)     # Bright blue (BGR format)
-    goal_crease_color = (255, 200, 200)  # Light blue
-    
-    # Rink boundaries
+    # Rink dimensions
     rink_left = padding
-    rink_right = padding + scaled_length
+    rink_right = scaled_length + padding
     rink_top = padding
-    rink_bottom = padding + scaled_width
-    center_x = padding + scaled_length // 2
-    center_y = padding + scaled_width // 2
+    rink_bottom = scaled_width + padding
+    center_x = (rink_left + rink_right) // 2
+    center_y = (rink_top + rink_bottom) // 2
     
-    # Dimensions in scale
+    # Corner radius for rounded corners
     corner_radius = int(28 * scale)
-    goal_line_from_end = int(11 * scale)
-    blue_line_from_goal = int(64 * scale)  # 75' from end - 11' goal line = 64'
     
-    # Line thicknesses - much thinner and more realistic
-    board_thickness = max(3, int(scale * 1.5))
-    center_line_thickness = max(2, int(scale * 0.8))  # Center red line
-    blue_line_thickness = max(2, int(scale * 0.8))    # Blue lines
-    goal_line_thickness = max(1, int(scale * 0.5))    # Goal lines
-    circle_thickness = max(1, int(scale * 0.4))       # Face-off circles
-    
-    # Draw boards (rink perimeter)
-    # Main rectangles
+    # Draw rink boundary with rounded corners
+    # Main rectangle body
     cv2.rectangle(rink_image, 
                  (rink_left + corner_radius, rink_top), 
                  (rink_right - corner_radius, rink_bottom), 
-                 board_color, board_thickness, cv2.LINE_AA)
+                 blue_color, line_thickness)
     cv2.rectangle(rink_image, 
                  (rink_left, rink_top + corner_radius), 
                  (rink_right, rink_bottom - corner_radius), 
-                 board_color, board_thickness, cv2.LINE_AA)
+                 blue_color, line_thickness)
     
-    # Rounded corners
+    # Draw rounded corners
     cv2.ellipse(rink_image, (rink_left + corner_radius, rink_top + corner_radius), 
-               (corner_radius, corner_radius), 0, 180, 270, board_color, board_thickness, cv2.LINE_AA)
+               (corner_radius, corner_radius), 0, 180, 270, blue_color, line_thickness)
     cv2.ellipse(rink_image, (rink_right - corner_radius, rink_top + corner_radius), 
-               (corner_radius, corner_radius), 0, 270, 360, board_color, board_thickness, cv2.LINE_AA)
+               (corner_radius, corner_radius), 0, 270, 360, blue_color, line_thickness)
     cv2.ellipse(rink_image, (rink_left + corner_radius, rink_bottom - corner_radius), 
-               (corner_radius, corner_radius), 0, 90, 180, board_color, board_thickness, cv2.LINE_AA)
+               (corner_radius, corner_radius), 0, 90, 180, blue_color, line_thickness)
     cv2.ellipse(rink_image, (rink_right - corner_radius, rink_bottom - corner_radius), 
-               (corner_radius, corner_radius), 0, 0, 90, board_color, board_thickness, cv2.LINE_AA)
-    
-    # Goal lines (11' from ends)
-    left_goal_line = rink_left + goal_line_from_end
-    right_goal_line = rink_right - goal_line_from_end
-    
-    cv2.line(rink_image, (left_goal_line, rink_top + board_thickness), 
-             (left_goal_line, rink_bottom - board_thickness), 
-             red_line_color, goal_line_thickness, cv2.LINE_AA)
-    cv2.line(rink_image, (right_goal_line, rink_top + board_thickness), 
-             (right_goal_line, rink_bottom - board_thickness), 
-             red_line_color, goal_line_thickness, cv2.LINE_AA)
-    
-    # Blue lines (64' from goal lines)
-    left_blue_line = left_goal_line + blue_line_from_goal
-    right_blue_line = right_goal_line - blue_line_from_goal
-    
-    cv2.line(rink_image, (left_blue_line, rink_top + board_thickness), 
-             (left_blue_line, rink_bottom - board_thickness), 
-             blue_line_color, blue_line_thickness, cv2.LINE_AA)
-    cv2.line(rink_image, (right_blue_line, rink_top + board_thickness), 
-             (right_blue_line, rink_bottom - board_thickness), 
-             blue_line_color, blue_line_thickness, cv2.LINE_AA)
+               (corner_radius, corner_radius), 0, 0, 90, blue_color, line_thickness)
     
     # Center red line
-    cv2.line(rink_image, (center_x, rink_top + board_thickness), 
-             (center_x, rink_bottom - board_thickness), 
-             red_line_color, center_line_thickness, cv2.LINE_AA)
+    cv2.line(rink_image, (center_x, rink_top), (center_x, rink_bottom), red_color, line_thickness)
     
-    # Face-off circles - proper size (15' radius = 30' diameter)
-    faceoff_radius = int(15 * scale)
-    
-    # Center ice face-off circle
-    cv2.circle(rink_image, (center_x, center_y), faceoff_radius, blue_line_color, circle_thickness, cv2.LINE_AA)
-    
-    # Center face-off spot
-    spot_radius = max(2, int(scale * 0.5))
-    cv2.circle(rink_image, (center_x, center_y), spot_radius, blue_line_color, -1, cv2.LINE_AA)
-    
-    # End zone face-off circles
-    faceoff_from_goal = int(20 * scale)    # 20' from goal line
-    faceoff_from_side = int(22 * scale)    # 22' from boards
-    
-    left_faceoff_x = left_goal_line + faceoff_from_goal
-    right_faceoff_x = right_goal_line - faceoff_from_goal
-    faceoff_y1 = rink_top + faceoff_from_side
-    faceoff_y2 = rink_bottom - faceoff_from_side
-    
-    # Draw end zone circles and spots
-    for fx, fy in [(left_faceoff_x, faceoff_y1), (left_faceoff_x, faceoff_y2),
-                   (right_faceoff_x, faceoff_y1), (right_faceoff_x, faceoff_y2)]:
-        cv2.circle(rink_image, (fx, fy), faceoff_radius, red_line_color, circle_thickness, cv2.LINE_AA)
-        cv2.circle(rink_image, (fx, fy), spot_radius, red_line_color, -1, cv2.LINE_AA)
-    
-    # Goal creases (6' radius) - proper light blue color
-    crease_radius = int(6 * scale)
-    crease_thickness = max(1, int(scale * 0.4))
-    
-    # Left goal crease
-    cv2.ellipse(rink_image, (left_goal_line, center_y), 
-               (crease_radius, crease_radius), 0, 270, 90, 
-               goal_crease_color, -1, cv2.LINE_AA)
-    cv2.ellipse(rink_image, (left_goal_line, center_y), 
-               (crease_radius, crease_radius), 0, 270, 90, 
-               blue_line_color, crease_thickness, cv2.LINE_AA)
-    
-    # Right goal crease
-    cv2.ellipse(rink_image, (right_goal_line, center_y), 
-               (crease_radius, crease_radius), 0, 90, 270, 
-               goal_crease_color, -1, cv2.LINE_AA)
-    cv2.ellipse(rink_image, (right_goal_line, center_y), 
-               (crease_radius, crease_radius), 0, 90, 270, 
-               blue_line_color, crease_thickness, cv2.LINE_AA)
-    
-    # Neutral zone face-off spots (smaller)
-    neutral_distance = int(5 * scale)
-    neutral_from_side = int(22 * scale)
-    neutral_spot_radius = max(1, int(scale * 0.3))
-    
-    for nx in [center_x - neutral_distance, center_x + neutral_distance]:
-        for ny in [rink_top + neutral_from_side, rink_bottom - neutral_from_side]:
-            cv2.circle(rink_image, (nx, ny), neutral_spot_radius, red_line_color, -1, cv2.LINE_AA)
-    
-    # Face-off circle hash marks - small and visible
-    hash_length = int(2 * scale)
-    hash_distance = int(2 * scale)
-    hash_thickness = max(1, int(scale * 0.3))
-    
-    def draw_hash_marks(center_pos, color):
-        cx, cy = center_pos
-        outer_radius = faceoff_radius + hash_distance
-        
-        # 4 hash marks around each circle
-        angles = [0, 90, 180, 270]  # right, top, left, bottom
-        for angle in angles:
-            mark_x = cx + int(outer_radius * np.cos(np.radians(angle)))
-            mark_y = cy + int(outer_radius * np.sin(np.radians(angle)))
-            
-            if angle in [0, 180]:  # horizontal marks
-                start_y = mark_y - hash_length // 2
-                end_y = mark_y + hash_length // 2
-                cv2.line(rink_image, (mark_x, start_y), (mark_x, end_y), color, hash_thickness, cv2.LINE_AA)
-            else:  # vertical marks
-                start_x = mark_x - hash_length // 2
-                end_x = mark_x + hash_length // 2
-                cv2.line(rink_image, (start_x, mark_y), (end_x, mark_y), color, hash_thickness, cv2.LINE_AA)
-    
-    # Add hash marks to end zone circles only
-    for fx, fy in [(left_faceoff_x, faceoff_y1), (left_faceoff_x, faceoff_y2),
-                   (right_faceoff_x, faceoff_y1), (right_faceoff_x, faceoff_y2)]:
-        draw_hash_marks((fx, fy), red_line_color)
-    
-    # Goals - simple line representation
-    goal_width = int(6 * scale)
-    goal_thickness = max(2, int(scale * 0.6))
-    
-    goal_top = center_y - goal_width // 2
-    goal_bottom = center_y + goal_width // 2
+    # Blue lines (divide rink into thirds)
+    blue_line_1 = rink_left + scaled_length // 3
+    blue_line_2 = rink_right - scaled_length // 3
+    cv2.line(rink_image, (blue_line_1, rink_top), (blue_line_1, rink_bottom), blue_color, line_thickness)
+    cv2.line(rink_image, (blue_line_2, rink_top), (blue_line_2, rink_bottom), blue_color, line_thickness)
     
     # Goal lines
-    cv2.line(rink_image, (left_goal_line, goal_top), (left_goal_line, goal_bottom), 
-             red_line_color, goal_thickness, cv2.LINE_AA)
-    cv2.line(rink_image, (right_goal_line, goal_top), (right_goal_line, goal_bottom), 
-             red_line_color, goal_thickness, cv2.LINE_AA)
+    goal_line_distance = int(config.goal_line_from_end * scale)
+    goal_line_1 = rink_left + goal_line_distance
+    goal_line_2 = rink_right - goal_line_distance
+    cv2.line(rink_image, (goal_line_1, rink_top), (goal_line_1, rink_bottom), red_color, line_thickness)
+    cv2.line(rink_image, (goal_line_2, rink_top), (goal_line_2, rink_bottom), red_color, line_thickness)
     
-    # Goal posts (small circles)
-    post_radius = max(2, int(scale * 0.4))
-    cv2.circle(rink_image, (left_goal_line, goal_top), post_radius, red_line_color, -1, cv2.LINE_AA)
-    cv2.circle(rink_image, (left_goal_line, goal_bottom), post_radius, red_line_color, -1, cv2.LINE_AA)
-    cv2.circle(rink_image, (right_goal_line, goal_top), post_radius, red_line_color, -1, cv2.LINE_AA)
-    cv2.circle(rink_image, (right_goal_line, goal_bottom), post_radius, red_line_color, -1, cv2.LINE_AA)
+    # Center faceoff circle (blue)
+    center_circle_radius = int(config.faceoff_circle_radius * scale)
+    cv2.circle(rink_image, (center_x, center_y), center_circle_radius, blue_color, line_thickness)
+    cv2.circle(rink_image, (center_x, center_y), 3, blue_color, -1)  # Center dot
     
-    # Referee's crease (small semicircle at center bottom)
-    ref_crease_radius = int(3 * scale)
-    if ref_crease_radius > 0:
-        cv2.ellipse(rink_image, (center_x, rink_bottom - board_thickness), 
-                   (ref_crease_radius, ref_crease_radius), 0, 0, 180, 
-                   red_line_color, max(1, circle_thickness // 2), cv2.LINE_AA)
+    # End zone faceoff circles (red)
+    faceoff_dot_distance = int(config.faceoff_dot_to_goal_line * scale)
+    faceoff_side_distance = int(config.faceoff_dot_from_side * scale)
     
+    # Left zone circles
+    left_faceoff_x = goal_line_1 + faceoff_dot_distance
+    faceoff_y1 = rink_top + faceoff_side_distance
+    faceoff_y2 = rink_bottom - faceoff_side_distance
+    
+    cv2.circle(rink_image, (left_faceoff_x, faceoff_y1), center_circle_radius, red_color, line_thickness)
+    cv2.circle(rink_image, (left_faceoff_x, faceoff_y1), 3, red_color, -1)
+    cv2.circle(rink_image, (left_faceoff_x, faceoff_y2), center_circle_radius, red_color, line_thickness)
+    cv2.circle(rink_image, (left_faceoff_x, faceoff_y2), 3, red_color, -1)
+    
+    # Right zone circles
+    right_faceoff_x = goal_line_2 - faceoff_dot_distance
+    cv2.circle(rink_image, (right_faceoff_x, faceoff_y1), center_circle_radius, red_color, line_thickness)
+    cv2.circle(rink_image, (right_faceoff_x, faceoff_y1), 3, red_color, -1)
+    cv2.circle(rink_image, (right_faceoff_x, faceoff_y2), center_circle_radius, red_color, line_thickness)
+    cv2.circle(rink_image, (right_faceoff_x, faceoff_y2), 3, red_color, -1)
+    
+    # Goal creases (semicircles in front of goals)
+    goal_crease_radius = int(6 * scale)
+    cv2.ellipse(rink_image, (goal_line_1, center_y), 
+               (goal_crease_radius, goal_crease_radius), 0, 270, 90, blue_color, line_thickness)
+    cv2.ellipse(rink_image, (goal_line_2, center_y), 
+               (goal_crease_radius, goal_crease_radius), 0, 90, 270, blue_color, line_thickness)
+    
+    # Add neutral zone faceoff dots
+    neutral_dot_distance = int(config.neutral_zone_dot_from_center * scale)
+    neutral_dot_side_distance = int(config.neutral_zone_dot_from_side * scale)
+    
+    # Left neutral zone dots
+    left_neutral_x = center_x - neutral_dot_distance
+    neutral_y1 = rink_top + neutral_dot_side_distance
+    neutral_y2 = rink_bottom - neutral_dot_side_distance
+    cv2.circle(rink_image, (left_neutral_x, neutral_y1), 3, red_color, -1)
+    cv2.circle(rink_image, (left_neutral_x, neutral_y2), 3, red_color, -1)
+    
+    # Right neutral zone dots
+    right_neutral_x = center_x + neutral_dot_distance
+    cv2.circle(rink_image, (right_neutral_x, neutral_y1), 3, red_color, -1)
+    cv2.circle(rink_image, (right_neutral_x, neutral_y2), 3, red_color, -1)
+    
+    # Add faceoff circle hash marks
+    hash_length = int(config.faceoff_hash_mark_length * scale)
+    hash_distance = int(config.faceoff_hash_mark_distance * scale)
+    
+    def draw_faceoff_hash_marks(center_pos, color):
+        cx, cy = center_pos
+        circle_radius = center_circle_radius + hash_distance
+        
+        # Draw 4 hash marks around each circle (top, bottom, left, right)
+        # Top hash marks
+        cv2.line(rink_image, 
+                (cx - hash_length//2, cy - circle_radius), 
+                (cx + hash_length//2, cy - circle_radius), 
+                color, line_thickness)
+        # Bottom hash marks  
+        cv2.line(rink_image, 
+                (cx - hash_length//2, cy + circle_radius), 
+                (cx + hash_length//2, cy + circle_radius), 
+                color, line_thickness)
+        # Left hash marks
+        cv2.line(rink_image, 
+                (cx - circle_radius, cy - hash_length//2), 
+                (cx - circle_radius, cy + hash_length//2), 
+                color, line_thickness)
+        # Right hash marks
+        cv2.line(rink_image, 
+                (cx + circle_radius, cy - hash_length//2), 
+                (cx + circle_radius, cy + hash_length//2), 
+                color, line_thickness)
+    
+    # Add hash marks to all faceoff circles
+    draw_faceoff_hash_marks((center_x, center_y), blue_color)  # Center circle
+    draw_faceoff_hash_marks((left_faceoff_x, faceoff_y1), red_color)  # Left zone circles
+    draw_faceoff_hash_marks((left_faceoff_x, faceoff_y2), red_color)
+    draw_faceoff_hash_marks((right_faceoff_x, faceoff_y1), red_color)  # Right zone circles
+    draw_faceoff_hash_marks((right_faceoff_x, faceoff_y2), red_color)
+
     return rink_image
 
-class RinkMapVisualizer:
-    """
-    Visualizes player positions on a 2D rink map with camera-aware mapping.
-    """
-    
-    def __init__(
-        self, 
-        config: HockeyRinkConfiguration,
-        scale: float = RINK_SCALE_FACTOR,
-        padding: int = RINK_PADDING,
-        team_colors: Optional[Dict[int, tuple]] = None
-    ):
-        """
-        Initialize the rink map visualizer.
-        
-        Args:
-            config: Hockey rink configuration
-            scale: Scale factor for the rink
-            padding: Padding around the rink
-            team_colors: Dictionary mapping team ID to BGR color tuple
-        """
-        self.config = config
-        self.scale = scale
-        self.padding = padding
-        
-        # Use fixed NHL dimensions to match draw_rink function
-        self.rink_length_ft = 200  # feet
-        self.rink_width_ft = 85    # feet
-        
-        # Default team colors
-        self.team_colors = team_colors or {
-            0: (147, 20, 255),   # Deep pink for team 0
-            1: (255, 191, 0),    # Blue for team 1
-            2: (71, 99, 255)     # Red for goalies
-        }
-        
-        # Create base rink image using the new professional draw_rink function
-        self.base_rink = draw_rink(
-            config=config,
-            scale=scale,
-            padding=padding,
-            line_thickness=2
-        )
-        
-        # Calculate rink dimensions for coordinate mapping using NHL dimensions
-        self.rink_width = int(self.rink_width_ft * scale)
-        self.rink_length = int(self.rink_length_ft * scale)
-        self.rink_left = padding
-        self.rink_right = self.rink_length + padding
-        self.rink_top = padding
-        self.rink_bottom = self.rink_width + padding
-        
-        # Camera-aware components
-        self.camera_detector = CameraViewDetector()
-        self.adaptive_mapper = AdaptiveMapper()
-        self.current_view_info = None
-        
-        # Store homography matrix if available
-        self.homography = None
-    
-    def set_homography(self, homography: np.ndarray):
-        """
-        Set homography matrix for coordinate transformation.
-        
-        Args:
-            homography: 3x3 homography matrix from video to rink coordinates
-        """
-        self.homography = homography
-    
-    def update_camera_view(self, keypoints: Optional[List[RinkKeypoint]], frame_shape: Tuple[int, int]):
-        """
-        Update camera view detection based on keypoints.
-        
-        Args:
-            keypoints: Detected rink keypoints
-            frame_shape: Shape of the video frame
-        """
-        self.current_view_info = self.camera_detector.classify_view(keypoints, frame_shape)
-        self.adaptive_mapper.update_view(self.current_view_info)
-        
-        # Calculate homography from keypoints if available
-        if keypoints and len(keypoints) >= 4:
-            # Only recalculate if we don't have a homography yet
-            if self.homography is None:
-                # Create a temporary detector to calculate homography
-                from common.rink_keypoint_detector import RinkKeypointDetector
-                detector = RinkKeypointDetector(None)  # Don't need model for homography calc
-                homography = detector.get_rink_homography(keypoints)
-                if homography is not None:
-                    self.set_homography(homography)
-                    print(f"Homography matrix set successfully")
-    
-    def transform_point(self, point: Tuple[float, float], video_shape: Tuple[int, int]) -> Tuple[int, int]:
-        """
-        Transform a point from video coordinates to rink map coordinates.
-        
-        Args:
-            point: (x, y) in video coordinates
-            video_shape: (height, width) of the video frame
-            
-        Returns:
-            (x, y) in rink map coordinates
-        """
-        if self.homography is not None:
-            # Use homography if available
-            pt = np.array([[point[0], point[1]]], dtype=np.float32)
-            transformed = cv2.perspectiveTransform(pt.reshape(1, 1, 2), self.homography)
-            map_x, map_y = transformed[0, 0]
-            
-            # Clamp to valid rink bounds for safety
-            map_x = max(0, min(map_x, self.rink_length + 2 * self.padding))
-            map_y = max(0, min(map_y, self.rink_width + 2 * self.padding))
-            
-            return int(map_x), int(map_y)
-        else:
-            # Fallback: Use adaptive mapper based on camera view
-            rink_dimensions = (self.rink_length, self.rink_width)
-            return self.adaptive_mapper.transform_point(
-                point, video_shape, rink_dimensions, self.padding
-            )
-    
-    def draw_players(
-        self,
-        frame_shape: Tuple[int, int],
-        player_positions: List[Tuple[float, float]],
-        team_assignments: np.ndarray,
-        player_radius: int = 8
-    ) -> np.ndarray:
-        """
-        Draw players on the rink map.
-        
-        Args:
-            frame_shape: Shape of the video frame (height, width)
-            player_positions: List of (x, y) positions in video coordinates
-            team_assignments: Array of team IDs for each player
-            player_radius: Radius of player dots
-            
-        Returns:
-            Rink map with players drawn
-        """
-        # Create a copy of the base rink
-        rink_map = self.base_rink.copy()
-        
-        # Draw each player
-        for i, (pos, team_id) in enumerate(zip(player_positions, team_assignments)):
-            # Transform position to rink coordinates
-            map_x, map_y = self.transform_point(pos, frame_shape)
-            
-            # Get team color
-            color = self.team_colors.get(team_id, (255, 255, 255))
-            
-            # Draw player dot with outline
-            cv2.circle(rink_map, (map_x, map_y), player_radius, color, -1)
-            cv2.circle(rink_map, (map_x, map_y), player_radius, (0, 0, 0), 2)
-            
-            # Optional: Add player number if available
-            # cv2.putText(rink_map, str(i), (map_x-5, map_y+5), 
-            #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        
-        return rink_map
-    
-    def draw_keypoints_on_map(self, keypoints: Optional[List[RinkKeypoint]] = None) -> np.ndarray:
-        """
-        Draw all keypoint mappings from keypoints.json on the rink map for debugging.
-        
-        Args:
-            keypoints: Optional list of detected keypoints to highlight
-            
-        Returns:
-            Rink map with keypoints visualized
-        """
-        import json
-        import os
-        
-        # Create a copy of the base rink
-        rink_map = self.base_rink.copy()
-        
-        # Load keypoint mappings
-        keypoints_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'hockey', 'data', 'keypoints.json')
-        if not os.path.exists(keypoints_file):
-            print(f"keypoints.json not found at {keypoints_file}")
-            return rink_map
-            
-        try:
-            with open(keypoints_file, 'r') as f:
-                keypoint_data = json.load(f)
-                mapped_keypoints = keypoint_data.get('keypoints', {})
-        except Exception as e:
-            print(f"Error loading keypoints.json: {e}")
-            return rink_map
-        
-        # Draw all mapped keypoints
-        for kp_id, mapping in mapped_keypoints.items():
-            if mapping.get('rink_position'):
-                rink_x_ft, rink_y_ft = mapping['rink_position']
-                
-                # Convert feet to pixels (using same scale as homography calculation)
-                map_x = int(rink_x_ft * self.scale + self.padding)
-                map_y = int(rink_y_ft * self.scale + self.padding)
-                
-                # Determine color based on zone
-                kp_id_int = int(kp_id)
-                if 0 <= kp_id_int <= 19:  # Left zone
-                    color = (0, 255, 0)  # Green
-                elif 20 <= kp_id_int <= 35:  # Center zone
-                    color = (255, 0, 0)  # Blue
-                else:  # Right zone (36-55)
-                    color = (0, 0, 255)  # Red
-                
-                # Draw keypoint
-                cv2.circle(rink_map, (map_x, map_y), 4, color, -1)
-                cv2.circle(rink_map, (map_x, map_y), 4, (0, 0, 0), 1)
-                
-                # Add keypoint ID
-                cv2.putText(rink_map, str(kp_id), (map_x + 6, map_y - 6),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-        
-        # If detected keypoints provided, highlight those that have mappings
-        if keypoints:
-            detected_count = 0
-            for kp in keypoints:
-                if kp.confidence > 0.5:
-                    kp_id_str = str(kp.id)
-                    if kp_id_str in mapped_keypoints and mapped_keypoints[kp_id_str].get('rink_position'):
-                        detected_count += 1
-                        rink_x_ft, rink_y_ft = mapped_keypoints[kp_id_str]['rink_position']
-                        map_x = int(rink_x_ft * self.scale + self.padding)
-                        map_y = int(rink_y_ft * self.scale + self.padding)
-                        
-                        # Draw larger circle for detected keypoints
-                        cv2.circle(rink_map, (map_x, map_y), 8, (255, 255, 0), 2)  # Yellow outline
-            
-            # Add text showing detection info
-            cv2.putText(rink_map, f"Detected: {detected_count}/{len(mapped_keypoints)} keypoints",
-                       (self.padding + 10, self.padding + 20),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-        
-        return rink_map
-    
-    def create_combined_view(
-        self,
-        video_frame: np.ndarray,
-        player_positions: List[Tuple[float, float]],
-        team_assignments: np.ndarray,
-        gap: int = 20,
-        show_keypoints: bool = False,
-        keypoints: Optional[List[RinkKeypoint]] = None
-    ) -> np.ndarray:
-        """
-        Create a combined view with video on top and rink map below.
-        
-        Args:
-            video_frame: The annotated video frame
-            player_positions: List of player positions
-            team_assignments: Array of team IDs
-            gap: Gap between video and map
-            show_keypoints: If True, show keypoint mapping visualization instead of players
-            keypoints: List of detected keypoints (used when show_keypoints=True)
-            
-        Returns:
-            Combined frame
-        """
-        # Get rink map with either players or keypoints
-        if show_keypoints:
-            rink_map = self.draw_keypoints_on_map(keypoints)
-        else:
-            rink_map = self.draw_players(
-                frame_shape=(video_frame.shape[0], video_frame.shape[1]),
-                player_positions=player_positions,
-                team_assignments=team_assignments
-            )
-        
-        # Resize rink map to match video width
-        video_height, video_width = video_frame.shape[:2]
-        map_height, map_width = rink_map.shape[:2]
-        
-        # Calculate scaling to fit width
-        scale_factor = video_width / map_width
-        new_map_height = int(map_height * scale_factor)
-        new_map_width = video_width
-        
-        # Resize rink map
-        resized_map = cv2.resize(rink_map, (new_map_width, new_map_height))
-        
-        # Create combined frame
-        total_height = video_height + gap + new_map_height
-        combined = np.zeros((total_height, video_width, 3), dtype=np.uint8)
-        
-        # Place video on top
-        combined[:video_height, :] = video_frame
-        
-        # Add separator line
-        combined[video_height:video_height+gap, :] = (128, 128, 128)
-        
-        # Place rink map below
-        combined[video_height+gap:, :] = resized_map
-        
-        return combined
+if __name__ == "__main__":
+    # Create a standard hockey rink configuration
+    config = HockeyRinkConfiguration()  # Use default values
+
+    # Draw the rink with better scaling
+    rink_image = draw_rink(config, scale=3.0, padding=30)
+
+    # Display the image using OpenCV
+    cv2.imshow("Hockey Rink", rink_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()

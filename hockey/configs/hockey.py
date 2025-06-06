@@ -1,10 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-# Global constants for scale and coordinate system consistency
-RINK_SCALE_FACTOR = 3.0
-RINK_PADDING = 50
-
 @dataclass
 class HockeyRinkConfiguration:
     """
