@@ -9,7 +9,6 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 # Import your hockey-specific modules
-from common.puck import PuckTracker, PuckAnnotator
 from common.team import TeamClassifier
 from common.smooth_annotator import SmoothAnnotator
 from common.team_selector import InteractiveTeamSelector
@@ -21,7 +20,6 @@ from common.rink_keypoint_detector import RinkKeypointDetector
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(PARENT_DIR, 'data')
 PLAYER_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-player-detection.pt')
-PUCK_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-puck-detection.pt')
 HOCKEY_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-detection.pt')
 
 # !! IMPORTANT !!: Updated class IDs to match your 2-class model (data_players_only.yaml)
@@ -29,9 +27,6 @@ HOCKEY_DETECTION_MODEL_PATH = os.path.join(DATA_DIR, 'hockey-detection.pt')
 PLAYER_CLASS_ID = 0      # 'player' class  
 GOALKEEPER_CLASS_ID = 1  # 'goalie' class
 # Note: REFEREE_CLASS_ID removed - not in current 2-class model
-
-# Puck detection model class
-PUCK_CLASS_ID = 0
 
 # --- Annotators ---
 COLORS = ['#FF1493', '#00BFFF', '#FF6347'] # Team1, Team2, Goalies
