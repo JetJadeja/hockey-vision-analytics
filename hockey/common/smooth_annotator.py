@@ -2,6 +2,7 @@ import numpy as np
 import supervision as sv
 from typing import Dict, Optional, Union
 from .detection_stabilizer import DetectionStabilizer
+from .detection_stabilizer_v2 import DetectionStabilizerV2
 
 
 class SmoothAnnotator:
@@ -11,22 +12,33 @@ class SmoothAnnotator:
     """
     
     def __init__(self, annotator: Union[sv.BoxAnnotator, sv.EllipseAnnotator], 
-                 smoothing_factor: float = 0.3, use_kalman: bool = True):
+                 smoothing_factor: float = 0.3, use_adaptive: bool = True):
         """
         Initialize the smooth annotator wrapper.
         
         Args:
             annotator: The base supervision annotator to wrap
             smoothing_factor: How much to smooth (0=no smoothing, 1=full smoothing)
-            use_kalman: Whether to use Kalman filtering (more advanced smoothing)
+            use_adaptive: Whether to use adaptive size stabilization
         """
         self.annotator = annotator
-        self.stabilizer = DetectionStabilizer(
-            smoothing_factor=smoothing_factor,
-            use_kalman=use_kalman,
-            velocity_threshold=15.0,  # Adjusted for hockey's fast pace
-            size_stability_factor=0.4  # More size stability
-        )
+        
+        if use_adaptive:
+            # Use new adaptive size stabilizer for better visual quality
+            self.stabilizer = DetectionStabilizerV2(
+                smoothing_factor=smoothing_factor,
+                use_adaptive_size=True,
+                position_smoothing=0.4,  # Responsive position tracking
+                size_smoothing=0.1      # Very stable size (key for visual quality)
+            )
+        else:
+            # Fallback to original stabilizer
+            self.stabilizer = DetectionStabilizer(
+                smoothing_factor=smoothing_factor,
+                use_kalman=True,
+                velocity_threshold=15.0,
+                size_stability_factor=0.4
+            )
     
     def annotate(
         self,

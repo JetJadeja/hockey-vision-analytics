@@ -40,8 +40,8 @@ COLORS = ['#FF1493', '#00BFFF', '#FF6347'] # Team1, Team2, Goalies
 BASE_ANNOTATOR = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(COLORS), thickness=2)
 
 # Wrap with smooth annotators for stable visualization
-# Using Kalman filtering with optimized settings for hockey
-ANNOTATOR = SmoothAnnotator(BASE_ANNOTATOR, smoothing_factor=0.25, use_kalman=True)
+# Using adaptive size stabilization for smooth, jitter-free bounding boxes
+ANNOTATOR = SmoothAnnotator(BASE_ANNOTATOR, smoothing_factor=0.3, use_adaptive=True)
 # Use supervision's label annotator with matching colors
 LABEL_ANNOTATOR = sv.LabelAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
