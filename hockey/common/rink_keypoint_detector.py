@@ -199,6 +199,7 @@ class RinkKeypointDetector:
         """
         import json
         import os
+        from configs.hockey import RINK_SCALE_FACTOR, RINK_PADDING
         
         # Load keypoint mappings
         keypoints_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'keypoints.json')
@@ -221,8 +222,8 @@ class RinkKeypointDetector:
         dst_points = []  # Rink coordinates (in pixels)
         
         # Scale and padding must match draw_rink exactly
-        scale = 3.0
-        padding = 50
+        scale = RINK_SCALE_FACTOR
+        padding = RINK_PADDING
         
         # Build correspondences from detected keypoints
         for kp in keypoints:

@@ -3,7 +3,7 @@ import supervision as sv
 import numpy as np
 from typing import List, Tuple, Optional, Dict
 
-from configs.hockey import HockeyRinkConfiguration
+from configs.hockey import HockeyRinkConfiguration, RINK_SCALE_FACTOR, RINK_PADDING
 from common.camera_view_detector import CameraViewDetector, ViewInfo
 from common.view_mappers import AdaptiveMapper
 from common.rink_keypoint_detector import RinkKeypoint
@@ -12,9 +12,9 @@ def draw_rink(
     config: HockeyRinkConfiguration,
     background_color: sv.Color = sv.Color.WHITE,
     line_color: sv.Color = sv.Color.BLUE,
-    padding: int = 50,
+    padding: int = RINK_PADDING,
     line_thickness: int = 4,
-    scale: float = 2.0
+    scale: float = RINK_SCALE_FACTOR
 ) -> np.ndarray:
     """
     Draws a professional NHL-standard hockey rink with proper proportions and realistic appearance.
@@ -229,8 +229,8 @@ class RinkMapVisualizer:
     def __init__(
         self, 
         config: HockeyRinkConfiguration,
-        scale: float = 1.5,
-        padding: int = 30,
+        scale: float = RINK_SCALE_FACTOR,
+        padding: int = RINK_PADDING,
         team_colors: Optional[Dict[int, tuple]] = None
     ):
         """

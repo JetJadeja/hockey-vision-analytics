@@ -9,14 +9,12 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 # Import your hockey-specific modules
-from common.puck import PuckTracker, PuckAnnotator
 from common.team import TeamClassifier
 from common.smooth_annotator import SmoothAnnotator
 from common.team_selector import InteractiveTeamSelector
-from common.styled_label_annotator import StyledLabelAnnotator
 from common.rink_keypoint_detector import RinkKeypointDetector
 from annotators.rink_annotator import RinkMapVisualizer
-from configs.hockey import HockeyRinkConfiguration
+from configs.hockey import HockeyRinkConfiguration, RINK_SCALE_FACTOR, RINK_PADDING
 
 # --- Constants and Paths ---
 # Assumes your models are in a 'data' folder next to your 'hockey' package
@@ -73,8 +71,11 @@ def process_hockey_video(source_path: str, device: str, rink_keypoints: bool = F
     # Initialize rink map visualizer if enabled
     rink_map_visualizer = None
     if show_2d_map:
+        # Initialize rink configuration
         rink_config = HockeyRinkConfiguration()
-        rink_map_visualizer = RinkMapVisualizer(rink_config, scale=3.0, padding=20)
+        
+        # Create 2D map visualizer with global constants
+        rink_map_visualizer = RinkMapVisualizer(rink_config, scale=RINK_SCALE_FACTOR, padding=RINK_PADDING)
         print("2D rink map visualization enabled")
     
     # Fit classifier with sample frames
